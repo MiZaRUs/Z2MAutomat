@@ -1,0 +1,20 @@
+{"url":"http://192.168.1.2:8080/rest/metrics",
+"menu":[
+    {"graph":"Температура", "spidtm":1, "scale":1, "factor":1.0, "data": [
+        {"uid":"0xxxxxxxxxxxxxxxx1","sensor":"temperature","title":"Кухня","color":[200,0,0]},
+        {"uid":"0xxxxxxxxxxxxxxxx2","sensor":"temperature","title":"Кабинет","color":[0,122,0]},
+        {"uid":"0xxxxxxxxxxxxxxxx3","sensor":"temperature","title":"Спальня","color":[0,0,200]}
+    ]},
+
+    {"graph":"Влажность", "spidtm":1, "scale":1, "factor":1.0, "data": [
+        {"uid":"0xxxxxxxxxxxxxxxx1","sensor":"humidity","title":"Кухня","color":[200,0,0]},
+        {"uid":"0xxxxxxxxxxxxxxxx2","sensor":"humidity","title":"Кабинет","color":[0,122,0]},
+        {"uid":"0xxxxxxxxxxxxxxxx3","sensor":"humidity","title":"Спальня","color":[0,0,200]}
+    ]},
+
+    {"graph":"Освещение", "spidtm":1, "scale":4, "factor":0.05, "data": [
+        {"uid":"0xxxxxxxxxxxxxxxx4","sensor":"illuminance","title":"Кухня, разделочный стол","color":[200,0,0]},
+        {"uid":"0xxxxxxxxxxxxxxxx5","sensor":"illuminance","title":"Кухня, чайный стол","color":[0,122,0]},
+        {"uid":"0xxxxxxxxxxxxxxxx6","sensor":"illuminance","title":"Кухня","color":[0,0,200]}
+    ]}
+]}

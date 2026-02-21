@@ -1,5 +1,5 @@
 Build
-conf/
+conf/monitor.json
 
 z2m_automation.tar
 z2m_monitoring.tar
