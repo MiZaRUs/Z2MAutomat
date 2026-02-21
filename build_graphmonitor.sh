@@ -3,7 +3,7 @@
 # Сборка Qt приложения.
 APP=graphmon
 #
-QMake=qmake5
+QMake=qmake6
 #
 if [ -d ./Build ]; then
     rm -R Build/*
@@ -12,7 +12,7 @@ else
 fi
 #
 cd ./Build/
-QMake ../src_graphmon
+$QMake ../src_graphmon
 if [ -f "Makefile" ]; then
     make
 else
