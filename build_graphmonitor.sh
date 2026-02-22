@@ -26,7 +26,7 @@ fi
 if [[ -f "${APP}" && $(stat -c %s "${APP}") -gt 400 ]]; then
     echo ""
     echo "$(date "+%F %H:%M:%S")"
-    mv $APP ../
+#    mv $APP ../
     echo "   ***"
 else
     echo ""

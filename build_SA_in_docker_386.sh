@@ -38,7 +38,7 @@ fi
 if [[ -f "${APP}.tar" && $(stat -c %s "${APP}.tar") -gt 400 ]]; then
     echo ""
     echo "$(date "+%F %H:%M:%S")  scp >>"
-    scp "${APP}.tar" buka.home:/opt/Z2MAutomat/
+#    scp "${APP}.tar" buka.home:/opt/Z2MAutomat/
     echo "   ***"
 else
     echo ""
