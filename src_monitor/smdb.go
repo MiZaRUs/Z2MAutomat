@@ -34,9 +34,10 @@ func (sm *SM) saveMetrics(data []byte) {
             if err := sm.mdb.Update(func(tx *bbolt.Tx) error {
                 if device, err := tx.CreateBucketIfNotExists([]byte(lid[0])); err == nil && device != nil {
                     if sensor, err := device.CreateBucketIfNotExists([]byte(lid[1])); err == nil && sensor != nil {
-                        _, v := sensor.Cursor().Last()				// последнее значение
-                        if bytes.Compare(v, data[8:16]) == 0 { return nil }	// проверить наличее такого же значения в последней записи
-//                        log.Printf(" * Metric: %s : %s -- %X : %X", lid[0], lid[1], data[0:8], data[8:16])
+                        t, v := sensor.Cursor().Last()                          // последнее значение
+                        tmd := time.Now().UnixMilli() - int64(binary.BigEndian.Uint64(t))
+                        if tmd < 10000 && bytes.Compare(v, data[8:16]) == 0 { return nil }      // игнорировать свежие повторы (10 секунд) !
+//                        log.Printf(" * Metric: %s : %s -- %X : %X -- %d", lid[0], lid[1], data[0:8], data[8:16], tmd)
                         return sensor.Put(data[0:8], data[8:16])
                     } else if err != nil { return err }
                 } else if err != nil { return err }
