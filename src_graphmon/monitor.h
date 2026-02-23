@@ -6,6 +6,7 @@
 #define _Monitor_h_
 
 #include <QtWidgets>
+#include <QtNetwork>
 #include "WxGraph.h"
 
 //---------------------------------------------------------------------------
@@ -22,6 +23,7 @@ struct WxMenu {
     int spidtm;
     int scale;
     double factor;
+    bool approxim;
     std::vector<GrData> data;
 };
 
@@ -38,10 +40,11 @@ class Monitor : public QWidget {
 
 public:
     explicit Monitor(AppConf*, QWidget *parent = nullptr);
-    double getData(int n, QString uid, QString sensor, qint64 tmin, qint64 tmax );
+    double getData(int n, QString uid, QString sensor, qint64 tmin, qint64 tmax, bool approxim );
 
 private:
     QTimer *timer;
+    QNetworkAccessManager *network;
     QVBoxLayout *plout;
     QMenu *pmenu;
     WxGraph *pgrd;
@@ -49,12 +52,13 @@ private:
     QString url;
     std::map<QString, WxMenu> config;
 
+    WxMenu *ptrCurMenu;
     QDateTime curDTime;
 
     float xfactor;	// множитель шкалы X
     float yfactor;	// множитель шкалы Y
 
-//    void refreshDate(void);
+    void refreshData();
 
 protected:
     virtual void contextMenuEvent(QContextMenuEvent *pe){

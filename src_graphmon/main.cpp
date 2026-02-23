@@ -5,13 +5,13 @@
 #include <QApplication>
 #include "monitor.h"
 
-#include <QFile>
-#include <QByteArray>
-#include <QJsonObject>
-#include <QJsonDocument>
-#include <QJsonArray>
-#include <QJsonValue>
-#include <QJsonParseError>
+//#include <QFile>
+//#include <QByteArray>
+//#include <QJsonObject>
+//#include <QJsonDocument>
+//#include <QJsonArray>
+//#include <QJsonValue>
+//#include <QJsonParseError>
 //#include <QDebug>
 //---------------------------------------------------------------------------
 
@@ -81,7 +81,7 @@ AppConf getConfig(QString fn){	// Читаем конфиг
                             }
                         }
                     }
-                    ac.menu.push_back({graph, obj["spidtm"].toInt(), obj["scale"].toInt(), obj["factor"].toDouble(), data });
+                    ac.menu.push_back({graph, obj["spidtm"].toInt(), obj["scale"].toInt(), obj["factor"].toDouble(), obj["approxim"].toBool(), data });
                 }
             }
         }

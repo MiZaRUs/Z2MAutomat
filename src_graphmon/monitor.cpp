@@ -3,7 +3,6 @@
  ****************************************************************************/
 
 #include "monitor.h"
-#include <QtNetwork>
 
 //#include <QJsonObject>
 //#include <QJsonDocument>
@@ -19,10 +18,13 @@ Monitor::Monitor(AppConf* cfg, QWidget* pwgt/*= 0*/) : QWidget(pwgt){
     setCursor(Qt::PointingHandCursor);
     setMinimumSize(180,273);
     resize(400,600);
-    setWindowTitle("Сделай выбор");
+    setWindowTitle("F1-подсказка. F9-меню.");
+
+    ptrCurMenu = nullptr;
 
     url = cfg->url;
 //    qDebug() << "DATA URL:" << url;
+    network = new QNetworkAccessManager();
 
     pmenu = new QMenu(this);
     int pn = 0;
@@ -50,14 +52,14 @@ Monitor::Monitor(AppConf* cfg, QWidget* pwgt/*= 0*/) : QWidget(pwgt){
     setLayout(plout);
 
     timer = new QTimer(this);
-    timer->setInterval(1000);         //60000=1min// 20000=20sek
+    timer->setInterval(10000);         //60000=1min// 20000=20sek
     connect(timer, SIGNAL(timeout()), this, SLOT(slotTimerRefresh()));
     timer->start();
-}//End WxMain
+}//End Monitor
 
 //---------------------------------------------------------------------------
 
-double Monitor::getData(int n, QString uid, QString sensor, qint64 tmin, qint64 tmax ){
+double Monitor::getData(int n, QString uid, QString sensor, qint64 tmin, qint64 tmax, bool aprx ){
     QJsonObject jsonObject;
     jsonObject["uid"] = uid;
     jsonObject["sensor"] = sensor;
@@ -69,8 +71,7 @@ double Monitor::getData(int n, QString uid, QString sensor, qint64 tmin, qint64 
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
-    QNetworkAccessManager *manager = new QNetworkAccessManager();
-    QNetworkReply *http = manager->post(request, postData);
+    QNetworkReply *http = network->post(request, postData);
     QEventLoop eventLoop;
     QObject::connect(http,SIGNAL(finished()),&eventLoop, SLOT(quit()));
     eventLoop.exec();
@@ -83,6 +84,7 @@ double Monitor::getData(int n, QString uid, QString sensor, qint64 tmin, qint64 
         qDebug() << "ERROR JSON parse:" << parseError.errorString() << parseError.offset;
         return -1;
     }
+    http->close();
 
     double tmf = -1;
     double val = -1;
@@ -94,8 +96,13 @@ double Monitor::getData(int n, QString uid, QString sensor, qint64 tmin, qint64 
             if (value.isObject()){
                 QJsonObject obj = value.toObject();
                 val = obj["val"].toDouble() * yfactor;
-		tmf = (tmax - static_cast<quint64>(obj["tmu"].toDouble())) * xfactor;
+                tmf = (tmax - static_cast<quint64>(obj["tmu"].toDouble())) * xfactor;
 //        qDebug() << "V:" << tmf << val;
+                if(!aprx && pgrd->trends[n].Points.size() > 0) {
+                    double vx = pgrd->trends[n].Points.back().ry();
+                    pgrd->trends[n].Points.push_back(QPointF(tmf, vx));	// сдинем прошлое значение
+                }
+
                 pgrd->trends[n].Points.push_back(QPointF(tmf, val));
             }
         }
@@ -106,20 +113,9 @@ double Monitor::getData(int n, QString uid, QString sensor, qint64 tmin, qint64 
 
 //---------------------------------------------------------------------------
 
-void Monitor::slotMenuClicked(QAction* pAction){
-    QString strmn = pAction->text().remove("&");
-    if(strmn == tr("Выxод"))slotActivExit();
-
-//    qDebug() << "MenuClicked:" << strmn  << " : " << pAction->objectName();
-
-    auto &c = config[pAction->objectName()];
-
-    qDebug() << "+M:" << strmn << pAction->objectName() << c.graph << c.spidtm << c.scale << c.factor << c.data.size();
-
-    if(strmn == "" || pAction->objectName() == "" || c.graph == "" || c.data.size() < 1 ) return;
-
-    setWindowTitle(strmn);
-
+void Monitor::refreshData(){
+//qDebug() << tr("Monitor::refreshData()");
+    if(ptrCurMenu == nullptr) return;
 
 //Количество данных зависит от видимой шкалы !!!
     int xscale = pgrd->getLenXScale()*600; //- размер шкалы в секундах
@@ -129,9 +125,6 @@ void Monitor::slotMenuClicked(QAction* pAction){
     auto tmax = curDTime.toMSecsSinceEpoch();
     auto tmin = curDTime.addSecs(-1 * xscale).toMSecsSinceEpoch();
 
-//    int hour = 4;				// количество часов в запросе
-//    auto tmin = curDTime.addSecs(-1 * (3600 * hour)).toMSecsSinceEpoch();
-//qDebug() << "Get DT:" << tmin << tmax << tmax - tmin;
 
     QTime tm = curDTime.time();
 //    pgrd->setPosition(tm.minute(), tm.second(), 59);	// шкала времени "минуты"
@@ -139,18 +132,36 @@ void Monitor::slotMenuClicked(QAction* pAction){
     xfactor = 0.00001 * (60.0 / float(20));	// множитель шкалы X  минуты.секунды;  60 минут / (xmm = 20)
 
 
-    yfactor = c.factor;	// множитель шкалы Y - один к одному
-    pgrd->setScale(c.scale);	// 0..50,  0..2
+    yfactor = ptrCurMenu->factor;	// множитель шкалы Y - один к одному
+    pgrd->setScale(ptrCurMenu->scale);	// 0..50,  0..2
 
-//    pgrd->Clear();			    		// Очистим данные трендов
     pgrd->trends.clear();				// Очистим тренды
     int it = 0;
-    for(auto &d : c.data){
+    for(auto &d : ptrCurMenu->data){
         qDebug() << " +D:" << d.uid << d.sensor << d.title << d.color;  // GrData{uid, sensor, title, QColor color }
         pgrd->trends.push_back(Trend(d.color));
-        getData(it, d.uid, d.sensor, tmin, tmax );	// double tmu		Кухня
+        getData(it, d.uid, d.sensor, tmin, tmax, ptrCurMenu->approxim );	// double tmu
         it++;
     }
+    return;
+}// End slot
+
+//---------------------------------------------------------------------------
+
+void Monitor::slotMenuClicked(QAction* pAction){
+    QString strmn = pAction->text().remove("&");
+    if(strmn == tr("Выxод"))slotActivExit();
+//    qDebug() << "MenuClicked:" << strmn  << " : " << pAction->objectName();
+
+    ptrCurMenu = &config[pAction->objectName()];
+
+//    qDebug() << "+M:" << strmn << pAction->objectName() << ptrCurMenu->graph << ptrCurMenu->spidtm << ptrCurMenu->scale << ptrCurMenu->factor << ptrCurMenu->approxim << ptrCurMenu->data.size();
+
+    if(strmn == "" || pAction->objectName() == "" || ptrCurMenu->graph == "" || ptrCurMenu->data.size() < 1 ) return;
+
+    setWindowTitle(strmn);
+    refreshData();
+
     pgrd->update();
     return;
 }// End slotMenuClicked
@@ -158,28 +169,21 @@ void Monitor::slotMenuClicked(QAction* pAction){
 //---------------------------------------------------------------------------
 
 void Monitor::slotTimerRefresh(){
+    QDateTime tmpDTime = curDTime;
     curDTime = QDateTime::currentDateTime();       // Время
-    QTime tm = curDTime.time();
+    if(ptrCurMenu == nullptr) return;
 
-    int hour = tm.hour();         // Get the hour (0-23)
-    int minute = tm.minute();     // Get the minute (0-59)
-    int second = tm.second();     // Get the second (0-59)
+    if((curDTime.time().minute() % 10) == 0 && curDTime.time().second() < 10){	// 10мин
 
-    if((second % 10) == 0){	// НАДО сделать выбор секунды минуты  (10сек, 1мин, 10мин)
+//Количество данных зависит от прошедшего времени !!!
+        auto tmax = curDTime.toMSecsSinceEpoch();
+        auto tmin = tmpDTime.toMSecsSinceEpoch();
+qDebug() << "Monitor::slotTimerRefresh() Get DT:" << tmin << tmax << tmax - tmin;
 
-qDebug() << "WxMain::slotTimerRefresh():" << hour << ":" << minute << ":" << second << " Scl:" << pgrd->getLenXScale()*600;
-
-        pgrd->setPosition(hour, minute, 23);	// шкала времени
-//        pgrd->setPosition(minute, second, 59);	// шкала времени
-
+        refreshData();		// НАДО оптимизировать размер запрашиваемых данных !!!
         pgrd->update();
     }
 }// End slot
-
-//void WxMain::refreshDate(){
-//qDebug() << tr("WxMain::refreshDate()");
-//    return;
-//}// End slot
 
 //---------------------------------------------------------------------------
 
@@ -190,13 +194,30 @@ void Monitor::keyPressEvent(QKeyEvent *event){
         slotActivHelp();
         break;
 
-    case 16777268:	// F5
+    case 16777267:	// F4
         slotTimerRefresh();
+        pgrd->update();
+        break;
+
+    case 16777268:	// F5
+        refreshData();
+        pgrd->update();
+        break;
+
+//    case 16777269:	// F6
+    case 16777270:	// F7
+    case 16777271:	// F8
+        refreshData();
+        pgrd->update();
         break;
 
     case 16777272:	// F9
-    case 16777216:	// esc
+        pmenu->show();
+        break;
+
+
     case 16777273:	// F10
+    case 16777216:	// esc
         slotActivExit();
         break;
 
@@ -214,14 +235,14 @@ void Monitor::slotActivHelp(){
         "<BODY>"
         "<H2><CENTER> SMonitor </CENTER></H2>"
         "<P ALIGN=\"left\">"
-            "Просмотр графиков"
-            "F5 обновить"
-            "esc F9 F10 завершить"
-            "<BR>"
+            "Просмотр графиков<BR>"
+            "F5 обновить полностью<BR>"
+            "F6 дополнить за прошедшее время<BR>"
+            "esc F10 завершить<BR>"
             "<BR>"
             "<BR>"
         "</P>"
-        "<H3><CENTER> Версия 0.4 </CENTER></H3>"
+        "<H3><CENTER> Версия 0.5 </CENTER></H3>"
         "<H4><CENTER> Февраль 2026 </CENTER></H4>"
         "<H4><CENTER> oleg@shirokov.online </CENTER></H4>"
         "<BR>"
