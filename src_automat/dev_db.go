@@ -196,3 +196,34 @@ func (dev *ZBDev) SaveSensors(sens []string) {
 }
 
 //---------------------------------------------------------------------------
+
+func (dev *ZBDev) SaveExecutorStatus() {
+    if dev.uid == "" || dev.status == nil { return }
+//    log.Println("SaveExecutorStatus():", dev.uid, dev.Name)
+    var sensors = []string{"state","state_l1","state_l2","state_l3","state_l4"}	// 1 или 4 реле, до 32
+    var res = uint64(0)
+    for i, sn := range sensors {
+        if act, ok := dev.status[sn]; ok && act != nil {
+            switch val := act.(type) {
+            case string:
+                if val == "OFF" || val == "ON" {
+                    res = res|uint64(0x100000000<<i)
+                    if val == "ON" { res = res|uint64(1<<i) }
+//                    log.Println(" === SaveExecutorStatus():", dev.uid, dev.Name, i, sn, val, fmt.Sprintf("RES:%X", res))
+                }
+            }
+        }
+    }
+//    log.Println(" === SaveExecutorStatus():", dev.uid, dev.Name, fmt.Sprintf("state:%X", res))
+    var data []byte
+    data = append(data, 1)						// 1 байт - тип пакета - метрика (1)
+    var bf [16]byte
+    binary.BigEndian.PutUint64(bf[:], uint64(dev.tmup.UnixMilli()))	// 8 байт - время
+    binary.BigEndian.PutUint64(bf[8:], res)				// 8 байт - значение
+    data = append(data, bf[:]...)
+    data = append(data, []byte(dev.uid+":state")...)			// дополним строкой - uid:сенсор
+    data = append(data, 0)						// завершим 0
+    if er := ipc.SendSHAMsg("localhost:10101", data); er != nil { log.Println("ERROR ipc.SendSHAMsg()", er) }
+}
+
+//---------------------------------------------------------------------------
