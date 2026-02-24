@@ -196,6 +196,9 @@ func (s *service) executeRules(sev *ZBDev) {	// стартует для кажд
         sev.SaveSensors([]string{"illuminance"})	// сохранить в БД (временное хранение)
 
 
+    case "0xa4c138e98909dd43", "0x70b3d52b601780f4", "0xa4c138853d5b9c40" :	// ИСПОЛНИТЕЛИ
+        sev.SaveExecutorStatus()						// сохранить состояние исполнителя в БД
+
 
     default:	// Проверим наличие команды - событие таймера
         if lid := strings.Split(sev.uid, `#`); len(lid)==2 && len(lid[0])==18 && len(lid[1])>7 {	// внутренние события (таймер...)
