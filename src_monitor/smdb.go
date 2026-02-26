@@ -73,7 +73,7 @@ func (sm *SM) checkMDBStatus() {        // Мониторинг состояни
                     device.ForEach(func(ns []byte, _ []byte) error {	// Перебор корзин (сенсор) в корзине (устойство)
                         ddel := time.Duration(24*3)			// постоянное хранение 3 суток
                         if string(ns) == "illuminance" { ddel = 25 }	// временное хранение  {illuminance}
-                        maxd := ipc.Int2Array(uint64(tmSafeKeeping.Add(-1*ddel * time.Hour).UnixMilli()))
+                        maxd := ipc.Uint2Array(uint64(tmSafeKeeping.Add(-1*ddel * time.Hour).UnixMilli()))
                         log.Println("MDB.Bucket.D&S:", time.UnixMilli(int64(binary.BigEndian.Uint64(maxd))).Format("2006-01-02 15:04:05.000"), string(nd), string(ns))
 
                         sensor := device.Bucket(ns)			// Получим корзину (сенсор)

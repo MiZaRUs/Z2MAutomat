@@ -66,7 +66,7 @@ func (sm *SM) executeConnect(conn *net.UDPConn, addr *net.UDPAddr, buf []byte) {
                 sm.saveMetrics(buf[1:len(buf)-2])
             }
         } else {
-            log.Printf("SRV CRC: failed! %X", ksx)
+            log.Printf("ERROR executeConnect CRC - failed: %X", ksx)
         }
     } // len OK
 }

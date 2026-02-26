@@ -68,7 +68,7 @@ func SendSHAMsg(port string, msg []byte)(err error) {
 
 //---------------------------------------------------------------------------
 
-func Int2Array(dx uint64)(buf []byte) {
+func Uint2Array(dx uint64)(buf []byte) {
     buf = make([]byte, 8)
     binary.BigEndian.PutUint64(buf[:], dx)
     return buf[:]
