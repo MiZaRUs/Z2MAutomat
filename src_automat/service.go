@@ -13,11 +13,15 @@ import (
     "math/rand"
     "runtime/debug"
     "os"
+    "go.etcd.io/bbolt"
     MQTT "github.com/eclipse/paho.mqtt.golang"
 )
 
+//----------------------------------------
+
 const (
     Z2M = "zigbee2mqtt/"	// префикс топика
+    monitor_addr = "localhost:10101"
 )
 
 //----------------------------------------
@@ -25,6 +29,8 @@ const (
 type service struct {
 //    mut     sync.Mutex
     mut      sync.RWMutex
+    queue   *bbolt.DB			// Очередь важных сообщений
+
     device_index  map[string]*ZBDev	// Конфигурации устройств
     timer_index   map[string]*time.Timer
     sensor_event  chan *ZBDev		// Событие от mqtt подписки
@@ -165,6 +171,7 @@ func (s *service) recoveryService() { // При сбоях в работе се�
         s.client.Disconnect(250)
         log.Println("ConnectMQTTClient.client Disconnect MQTT Client!")
     }
+    s.queue.Close()
     log.Println("WARNING Работа сервиса прекращена!\n\n\n")
 }
 
@@ -173,6 +180,13 @@ func (s *service) recoveryService() { // При сбоях в работе се�
 //===========================================================================
 func main() {
     log.SetFlags(log.Ldate | log.Ltime)
+    defer log.Println("WARNING Работа сервиса прекращена!\n\n\n")
+
+    err := os.MkdirAll("./host/data", 0777)
+    if err != nil && !os.IsExist(err) {
+        log.Println("FATAL_ERROR MkDir data:", err)
+        return
+    }
 
     srv := createService()
     if srv.client == nil || srv.sensor_event == nil || srv.device_index == nil || len(srv.device_index) < 1 {
@@ -180,6 +194,13 @@ func main() {
     }
     defer srv.recoveryService()
 //-------------------------------------
+    log.Println("Создаём хранилище очереди сообщений")
+    if srv.queue, err = bbolt.Open("./host/data/queue.db", 0600, &bbolt.Options{Timeout: 2 * time.Second}); err != nil {
+        log.Println("FATAL_ERROR CreateQueueDB.Open:", err)
+        return
+    }
+    log.Println("  QueueDB Path:", srv.queue.Path(), " Stats:", srv.queue.Stats())
+
 
 // -- установить начальное состояние !
 // srv.executeSetDefault()
@@ -203,7 +224,7 @@ func main() {
     if len(msg2monitor) > 22 {
         msg2monitor = msg2monitor[:len(msg2monitor)-1]		// удалим последнюю запятую
         msg2monitor += "]"
-        log.Println("Send2Monitor:", msg2monitor)
+        log.Println("4Monitor:", msg2monitor)
     }
 //-------------------------------------
 
