@@ -8,7 +8,7 @@ import (
     "log"
     "fmt"
     "time"
-//    "sync"
+    "sync"
 //    "strings"
     "strconv"
     "math"
@@ -20,6 +20,7 @@ import (
 //----------------------------------------
 
 type ZBDev struct {
+    mut       sync.RWMutex
     uid       string
     qos       byte
     Name      string
@@ -41,14 +42,15 @@ func loadDevicesConfig(conf string, index map[string]*ZBDev) {
     tmu := time.Now()
 
 // датчики протечки
-    index["0xa4c138ade4c67c34"] = &ZBDev{uid:"0xa4c138ade4c67c34", tmup:tmu, qos:2, Name:"Душевая, под умывальником"}		// "tamper":false,"water_leak":false
-    index["0xa4c138061ca5ff5a"] = &ZBDev{uid:"0xa4c138061ca5ff5a", tmup:tmu, qos:2, Name:"Туалет, за унитазом"}			// "tamper":false,"water_leak":false
-    index["0xa4c1384b234a0c7e"] = &ZBDev{uid:"0xa4c1384b234a0c7e", tmup:tmu, qos:2, Name:"Кухня, под раковиной"}		// "tamper":false,"water_leak":false - плохая батарея !!!
+    index["0xa4c138ade4c67c34"] = &ZBDev{uid:"0xa4c138ade4c67c34", tmup:tmu, qos:2, Name:"Душевая, под умывальником"}	// "tamper":false,"water_leak":false
+    index["0xa4c138061ca5ff5a"] = &ZBDev{uid:"0xa4c138061ca5ff5a", tmup:tmu, qos:2, Name:"Туалет, за унитазом"}		// "tamper":false,"water_leak":false
+    index["0xa4c1384b234a0c7e"] = &ZBDev{uid:"0xa4c1384b234a0c7e", tmup:tmu, qos:2, Name:"Кухня, под раковиной"}	// "tamper":false,"water_leak":false - плохая батарея !!!
 
 // ручное управление
     index["0x20a716fffef03087"] = &ZBDev{uid:"0x20a716fffef03087", tmup:tmu, qos:2, Name:"Кнопка-1" }		// action: "single", double", "long"
     index["0xa4c1382b7c6b84f5"] = &ZBDev{uid:"0xa4c1382b7c6b84f5", tmup:tmu, qos:2, Name:"Кнопка, столовая" }	// action: "single", double", "hold"
 
+// присутствие
     index["0xa4c138bf239fc880"] = &ZBDev{uid:"0xa4c138bf239fc880", tmup:tmu, qos:2, Name:"Кухня, присутствие"}	// presence: false, true    + Illuminance:int + presence_sensitivity + target_distance + detection_distance_{max|max}
     index["0xa4c138acbd2987a4"] = &ZBDev{uid:"0xa4c138acbd2987a4", tmup:tmu, qos:2, Name:"Кухня, чайный стол"}	// presence: false, true    + Illuminance:int + presence_sensitivity + target_distance + detection_distance_{max|max}
     index["0xa4c1387d9dbc566f"] = &ZBDev{uid:"0xa4c1387d9dbc566f", tmup:tmu, qos:2, Name:"Кухня, активность" }	// occupancy: false, true  + illuminance:int
@@ -59,8 +61,8 @@ func loadDevicesConfig(conf string, index map[string]*ZBDev) {
     index["0xa4c138d1df3edebd"] = &ZBDev{uid:"0xa4c138d1df3edebd", tmup:tmu, qos:2, Name:"Спальня"}		// ,"humidity":24.5,"temperature":25.75
 
 // executor
-    index["0xa4c138e98909dd43"] = &ZBDev{uid:"0xa4c138e98909dd43", executor:true, qos:0, Name:"Кухня - Освещение" }		// "state_l1:"OFF","ON" + "state_l2:"OFF","ON" + "state_l3:"OFF","ON" + "state_l4:"OFF","ON"
-    index["0x70b3d52b601780f4"] = &ZBDev{uid:"0x70b3d52b601780f4", executor:true, qos:0, Name:"Кухня - Фонарь" }		// "state":
+    index["0xa4c138e98909dd43"] = &ZBDev{uid:"0xa4c138e98909dd43", executor:true, qos:0, Name:"Кухня - Освещение" }	// "state_l1:"OFF","ON" + "state_l2:"OFF","ON" + "state_l3:"OFF","ON" + "state_l4:"OFF","ON"
+    index["0x70b3d52b601780f4"] = &ZBDev{uid:"0x70b3d52b601780f4", executor:true, qos:0, Name:"Кухня - Фонарь" }	// "state":
     index["0xa4c138853d5b9c40"] = &ZBDev{uid:"0xa4c138853d5b9c40", tmup:tmu, executor:true, qos:0, Name:"Кухня - Розетка"}	// "state":"OFF","ON"
 }
 
@@ -73,6 +75,8 @@ func (db *service) updateZ2MDevice(uid string, jsmsg []byte) *ZBDev{	//
     db.mut.Lock()
     defer db.mut.Unlock()
     if dx, ok := db.device_index[uid]; ok && dx != nil {
+        dx.mut.Lock()
+        defer dx.mut.Unlock()
         if _, ok := dx.status["action"]; ok { dx.status["action"] = "" }	// если есть, обнулим прежнее значение !!!
 
         var tmpstat interface{}		// сохраним прежнее значение
@@ -92,7 +96,6 @@ func (db *service) updateZ2MDevice(uid string, jsmsg []byte) *ZBDev{	//
             if uid == "0x449fdafffe145831" {
                 log.Println(" ^^^^^^^ ", dx.Name, string(jsmsg))
             }
-
             return dx								// вернём с новыми значениями
         }else{
             log.Println("ERROR ZBMSG:", err)
@@ -107,6 +110,8 @@ func (db *service) updateZ2MDevice(uid string, jsmsg []byte) *ZBDev{	//
 
 func (dev *ZBDev) String(str string) string {
     if dev.uid == "" || dev.status == nil { return "" }
+    dev.mut.RLock()
+    defer dev.mut.RUnlock()
     if act, ok := dev.status[str]; ok && act != nil {
         switch val := act.(type) {
         case string:
@@ -124,6 +129,8 @@ func (dev *ZBDev) String(str string) string {
 
 func (dev *ZBDev) Bool(str string) bool {
     if dev.uid == "" || dev.status == nil { return false }
+    dev.mut.RLock()
+    defer dev.mut.RUnlock()
     if act, ok := dev.status[str]; ok && act != nil {
         switch val := act.(type) {
         case bool:
@@ -141,6 +148,8 @@ func (dev *ZBDev) Bool(str string) bool {
 
 func (dev *ZBDev) Int(str string) int {
     if dev.uid == "" || dev.status == nil { return 0 }
+    dev.mut.RLock()
+    defer dev.mut.RUnlock()
     if act, ok := dev.status[str]; ok && act != nil {
         switch val := act.(type) {
         case int:
@@ -159,6 +168,8 @@ func (dev *ZBDev) Int(str string) int {
 
 func (dev *ZBDev) Digit(str string) float64 {
     if dev.uid == "" || dev.status == nil { return 0 }
+    dev.mut.RLock()
+    defer dev.mut.RUnlock()
     if act, ok := dev.status[str]; ok && act != nil {
         switch val := act.(type) {
         case float64:
@@ -197,8 +208,8 @@ func (dev *ZBDev) SaveSensors(sens []string) {
 
 //---------------------------------------------------------------------------
 
-func (dev *ZBDev) SaveExecutorStatus() {
-    if dev.uid == "" || dev.status == nil { return }
+func (dev *ZBDev) SaveExecutorState() {
+    if !dev.executor || dev.uid == "" || dev.status == nil { return }
 //    log.Println("SaveExecutorStatus():", dev.uid, dev.Name)
     var sensors = []string{"state","state_l1","state_l2","state_l3","state_l4"}	// 1 или 4 реле, до 32
     var res = uint64(0)

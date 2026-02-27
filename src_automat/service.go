@@ -9,6 +9,7 @@ import (
     "fmt"
     "time"
     "strings"
+    "encoding/json"
     "sync"
     "math/rand"
     "runtime/debug"
@@ -16,11 +17,18 @@ import (
     "go.etcd.io/bbolt"
     MQTT "github.com/eclipse/paho.mqtt.golang"
 )
+//----------------------------------------
+
+type SECRET struct {	// данные для подключения к сервисам оповещения (telegram, jabber, mail or FCM)
+    TgToken  string `json:"tg_token"`
+    TgChatID string `json:"tg_chatid"`
+}
 
 //----------------------------------------
 
 const (
     Z2M = "zigbee2mqtt/"	// префикс топика
+    mqtt_broker_addr = "tcp://localhost:1883"
     monitor_addr = "localhost:10101"
 )
 
@@ -30,18 +38,18 @@ type service struct {
 //    mut     sync.Mutex
     mut      sync.RWMutex
     queue   *bbolt.DB			// Очередь важных сообщений
+    secret   SECRET
 
-    device_index  map[string]*ZBDev	// Конфигурации устройств
     timer_index   map[string]*time.Timer
+    device_index  map[string]*ZBDev	// Конфигурации устройств
     sensor_event  chan *ZBDev		// Событие от mqtt подписки
+    messag_event  chan uint64		// Событие-извещение для отправителя сообщений
     client MQTT.Client
 
     debugLog  bool
 
 // flags
     automatic bool              // НАДО обозначить индикацию !!!
-
-    obj_active_tm time.Time	// время последней активности объекта
 }
 
 //---------------------------------------------------------------------------
@@ -101,16 +109,39 @@ func (s *service) messageHandler(client MQTT.Client, msg MQTT.Message) {	// MQTT
 
 // * Инициализация сервиса и подключение к MQTT
 func createService()(s service) {
+    var err error
+    if err = os.MkdirAll("./host/data", 0777); err != nil && !os.IsExist(err) {
+        log.Println("FATAL_ERROR MkDir host-data:", err)
+        return
+    }
+
+    log.Println("Создаём хранилище очередей сообщений")
+    if s.queue, err = bbolt.Open("./host/data/queue.db", 0600, &bbolt.Options{Timeout: 2 * time.Second}); err != nil {
+        log.Println("FATAL_ERROR CreateQueueDB.Open:", err)
+        return
+    }
+
+    if jsf, err := os.ReadFile("./host/data/secret.json"); err != nil || json.Unmarshal(jsf, &s.secret) != nil {
+        s.secret = SECRET{}
+        log.Println("WARNING Ошибка файла secret.json:", err)
+    }
+
+    s.timer_index  = make(map[string]*time.Timer)
+    s.device_index = make(map[string]*ZBDev)	// Хранилище устройств
+    s.sensor_event = make(chan *ZBDev)		// События от устройств
+    s.messag_event = make(chan uint64)		// Событие-извещение для отправителя сообщений
+    loadDevicesConfig("./host/data/dev.json", s.device_index)	// конфигурации устройств
+
 
     s.debugLog = false
 
-    if s.debugLog {
-        if err := os.Mkdir("./logs", 0777); err != nil && !os.IsExist(err) {	// os.MkdirAll("test/subdir",
-            log.Println("ERROR FATAL", err)
+// * Инициализация клиентского подключения к MQTT.
+    if s.debugLog {	// только для отладки взаимодействия с MQTT
+        if err := os.Mkdir("./host/logs", 0777); err != nil && !os.IsExist(err) {
+            log.Println("FATAL_ERROR", err)
             return
         }
-
-        filemqttDebug, er1 := os.OpenFile("./logs/mqttDebug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+        filemqttDebug, er1 := os.OpenFile("./host/logs/mqttDebug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
         if er1 != nil {
             log.Println("ERROR OpenFile:", er1)
         } else {
@@ -122,17 +153,8 @@ func createService()(s service) {
         }
     }
 
-
-    s.timer_index  = make(map[string]*time.Timer)
-    s.sensor_event = make(chan *ZBDev)	// События от устройств
-
-    s.device_index = make(map[string]*ZBDev)	// Хранилище устройств
-    loadDevicesConfig("dev.json", s.device_index)	// конфигурации устройств
-    log.Println("Initialization.ZBDev:", len(s.device_index))
-
-// * Инициализация клиентского подключения.
     opts := MQTT.NewClientOptions()
-    opts.AddBroker("tcp://localhost:1883")		// broker   - адрес сервера, tcp://IP:PORT. Default: tcp://localhost:1883
+    opts.AddBroker(mqtt_broker_addr)			// broker   - адрес сервера, tcp://IP:PORT. Default: tcp://localhost:1883
     opts.SetUsername("")				// user     - Имя пользователя.
     opts.SetPassword("")				// password - Пароль.
     gen_id := fmt.Sprintf("ClMQTT:%v", uint32(rand.Uint32()))
@@ -182,29 +204,21 @@ func main() {
     log.SetFlags(log.Ldate | log.Ltime)
     defer log.Println("WARNING Работа сервиса прекращена!\n\n\n")
 
-    err := os.MkdirAll("./host/data", 0777)
-    if err != nil && !os.IsExist(err) {
-        log.Println("FATAL_ERROR MkDir data:", err)
-        return
-    }
-
     srv := createService()
-    if srv.client == nil || srv.sensor_event == nil || srv.device_index == nil || len(srv.device_index) < 1 {
+    log.Println("Инициализировано устройств ZBDev:", len(srv.device_index))
+    if srv.client == nil || srv.sensor_event == nil || srv.timer_index == nil || srv.device_index == nil || len(srv.device_index) < 1 {
+        log.Println("ERROR Неверная конфигурация!")
         return
     }
+
+    log.Println("Инициализировано хранилище сообщений QueueDB Path:", srv.queue.Path(), " Stats:", srv.queue.Stats())
+
+    if len(srv.secret.TgToken) < 44 || len(srv.secret.TgChatID) < 14 {	// Проверить конфигурацию оповещений
+        log.Println("\n*********************************************************************\n \t\t\t\tНет информации для оповещателя ! \n*********************************************************************")
+    }
+
     defer srv.recoveryService()
-//-------------------------------------
-    log.Println("Создаём хранилище очереди сообщений")
-    if srv.queue, err = bbolt.Open("./host/data/queue.db", 0600, &bbolt.Options{Timeout: 2 * time.Second}); err != nil {
-        log.Println("FATAL_ERROR CreateQueueDB.Open:", err)
-        return
-    }
-    log.Println("  QueueDB Path:", srv.queue.Path(), " Stats:", srv.queue.Stats())
 
-
-// -- установить начальное состояние !
-// srv.executeSetDefault()
-// srv.executeAllOFF()
 //-------------------------------------
     msg2monitor := "["
     srv.mut.RLock()
@@ -228,8 +242,11 @@ func main() {
     }
 //-------------------------------------
 
+// -- установить начальное состояние !
+    srv.executeSetDefault()
     srv.automatic = true		// Включить автоматику!
-    go srv.checkStatus()		// Мониторинг состояния
+
+    go srv.procStatusMonitor()		// Мониторинг состояния
 
     for{				// Ожидание событий и запуск процесса исполнения
         time.Sleep(time.Millisecond * time.Duration(10))
