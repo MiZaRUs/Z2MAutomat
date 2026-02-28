@@ -61,9 +61,8 @@ func (s *service) executeRules(sev *ZBDev) {	// стартует для кажд
 
     switch sev.uid {
     case "0xa4c138ade4c67c34", "0xa4c1384b234a0c7e", "0xa4c138061ca5ff5a":	// Протечка !!! // "tamper":false,"water_leak":false
-        log.Println(" ::::::::::::ТЕСТ:", sev.uid, sev.Name, "ПРОТЕЧКА?", sev.lastst, sev.Bool("water_leak"))
         if sev.Bool("water_leak") {
-            go s.sendNotification(1, sev.tmup, fmt.Sprintf("%s:АВАРИЯ:%s-ПРОТЕЧКА!", sev.uid, sev.Name))
+            go s.sendNotification(1, sev.tmup, fmt.Sprintf("АВАРИЯ:ПРОТЕЧКА! %s", sev.Name))
             log.Println("WARNING АВАРИЯ:", sev.uid, sev.Name, "ПРОТЕЧКА!")
         }
 

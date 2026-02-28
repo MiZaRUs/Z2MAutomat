@@ -61,12 +61,13 @@ func (s *service) procStatusMonitor() {       // Мониторинг состо
         if lvl := <- s.messag_event; lvl > 0 {
             tmnow := time.Now()
 
-            if lvl < 100 { s.checkNotification(tmnow, lvl) }              // level 1...99 - отправить оповещение если есть!
+            if lvl < 100 { s.checkNotification(tmnow, lvl) }	// level 1...99 - отправить оповещение если есть!
 
 // НАДО проверку незавершенных таймеров ???
 
             if lvl == 0xFFFFFFF8 { // каждые 10 минут
-                log.Println("#####################  10 минутный ТАЙМЕР  #####################")
+                log.Println("#10")
+                s.checkNotification(tmnow, 0)			// проверить состояние системы оповещений
             }
 
             if lvl == 0xFFFFFFFF { // раз в час
@@ -89,30 +90,96 @@ func (s *service) procStatusMonitor() {       // Мониторинг состо
 
 func (s *service) checkNotification(tmnow time.Time, lvl uint64) {
     if s.queue == nil { return }
-    log.Println("checkNotification ", lvl)	// level 1..99
+//    log.Println("checkNotification ", lvl)
 
-    if err := s.queue.Update(func(tx *bbolt.Tx) error {
-        tx.ForEach(func(lvl []byte, bucket *bbolt.Bucket) error { // Получим все корзины (уровни оповещений)
-        level := binary.BigEndian.Uint64(lvl)
-        if bucket != nil && level > 0 && level < 100 && bucket.Stats().KeyN > 0 {
-// НАДО только новые !!!
-            bucket.ForEach(func(tmu, msg []byte) error { // Получим все корзины (уровни оповещений) level	bucket.Stats().KeyN
-                log.Printf(" ------------------------- SEND: lvl:%d  TM:%s  Msg%s", level, time.UnixMilli(int64(binary.BigEndian.Uint64(tmu))).Format("2006-01-02 15:04:05.000"), string(msg) )
-                bucket.Delete(tmu) // удалить переданные оповещения !!!
-                return nil
-            })
+    if lvl > 0 && lvl < 100 {	// level 1..99 - свежие сообщение
+        var tmp_tmu []byte
+        var tmp_msg []byte
+
+        if err := s.queue.View(func(tx *bbolt.Tx) error {
+            level := tx.Bucket(ipc.Uint2Array(lvl))		// Получим корзину (level)
+            if level != nil {
+                if tmu, msg := level.Cursor().Last(); tmu != nil && msg != nil  && (tmnow.UnixMilli() - int64(binary.BigEndian.Uint64(tmu))) < 2000 {	// 2 sec последнее свежие сообщение
+                    tmp_tmu = tmu
+                    tmp_msg = msg
+                    return nil
+                }
+            }
+            return fmt.Errorf("очень плохо, нет такого сообщения!")	// ПРОБЛЕМА !!!
+        }); err != nil {
+            log.Println("ERROR QueueDB.Notification-t1:", err)
         }
+        if tmp_tmu == nil || tmp_msg == nil { return }	// Обязательно должно быть свежее сообщение !!!
+
+
+        if err := s.queue.View(func(tx *bbolt.Tx) error {		// Поиск дубля в кэше
+            if cashe := tx.Bucket(ipc.Uint2Array(0)); cashe != nil {	// Получим корзину (0) - отправленные, последнее свежие сообщение
+                maxd := uint64(tmnow.Add(-10*time.Minute).UnixMilli())	// 10 минут !!!!!!!!!!!!!!!
+                cashe.ForEach(func(tmu []byte, msg []byte) error {
+                    if tmu != nil && msg != nil && binary.BigEndian.Uint64(tmu) > maxd && bytes.Compare(tmp_msg, msg) == 0 {	// сравнить сообщение с кэшем отправки !!! не устарело
+                        tmp_tmu = nil
+                        tmp_msg = nil
+                    }
+                    return nil
+                })
+            }
+            return nil
+        }); err != nil { log.Println("ERROR QueueDB.Notification-t2:", err) }
+
+
+        if tmp_tmu != nil && tmp_msg != nil {
+            if err := telegramSend(&s.secret, string(tmp_msg)); err == nil {
+                if err := s.queue.Update(func(tx *bbolt.Tx) error {
+                    if cashe, err := tx.CreateBucketIfNotExists(ipc.Uint2Array(0)); err == nil && cashe != nil {	// Получим корзину (кэш) - отправленные
+                        return cashe.Put(tmp_tmu, tmp_msg)
+                    } else {
+                        return err
+                    }
+                }); err != nil {
+                    log.Println("ERROR QueueDB.Notification-t3:", err)
+                    return
+                }
+            } else {
+                log.Println("ERROR QueueDB.Notification.telegrammSend:", err)
+            }
+        }
+
+    } // level 1..99
+
+
+    if err := s.queue.Update(func(tx *bbolt.Tx) error {		// Чистка БД
+        tx.ForEach(func(lvl []byte, bucket *bbolt.Bucket) error { // Получим все корзины (уровни оповещений)
+
+// НАДО поиск неотправленных до очистки кэша !!!
+
+            level := binary.BigEndian.Uint64(lvl)
+            if bucket != nil { log.Println("QueueDB.Clear-X:", level, bucket.Stats().KeyN) }
+
+            if bucket != nil && bucket.Stats().KeyN > 0 {
+                ddel := time.Duration(60)			// временное хранение	60*25 час
+                if level == 0 { ddel = 10 }			// кэш 5-15 минут	!!!!!!!!!!!!!!!!!!!!!!!
+                if level == 1 { ddel = 60*3 }			// длительное хранение 3 суток Duration(60*24*3)
+                maxd := uint64(tmnow.Add(-1*ddel * time.Minute).UnixMilli())
+                c := bucket.Cursor()
+                for tmu, msg := c.Seek(ipc.Uint2Array(maxd)); tmu != nil; tmu, _ = c.Prev() {
+                    if binary.BigEndian.Uint64(tmu) < maxd {
+                        log.Printf("-- DELETE: lvl:%d  TM:%s  Msg%s", level, time.UnixMilli(int64(binary.BigEndian.Uint64(tmu))).Format("2006-01-02 15:04:05.000"), string(msg) )
+                        bucket.Delete(tmu) // удалить старые оповещения !!!
+                    }
+                }
+            }
             return nil
         })
         return nil
     }); err != nil {
-        log.Println("ERROR sm.mdb.Update:", err)
+        log.Println("ERROR QueueDB.Notification-X:", err)
     }
 }
 
 //---------------------------------------------------------------------------
 
-func telegrammSend(srt *SECRET, msg string) error {		//         telegrammSend(&secret, message)
+func telegramSend(srt *SECRET, msg string) error {		//         telegrammSend(&secret, message)
+    if len(msg) < 3 { msg += "???" }
     qstr := `{"chat_id":"`+srt.TgChatID+`","text":"`+msg+`"}`
     req, err := http.NewRequest( "POST", "https://api.telegram.org/bot"+srt.TgToken+"/sendMessage", bytes.NewBufferString(qstr))
     if err == nil {
@@ -134,7 +201,6 @@ func telegrammSend(srt *SECRET, msg string) error {		//         telegrammSend(&s
             }
             err = fmt.Errorf("resp.StatusCode:%d", resp.StatusCode)
         }
-        log.Printf("ERROR telegrammSend: status:%d, err:%v data:%s\n\n", resp.StatusCode, err, resp)
         return err
     }
     return err
