@@ -27,8 +27,10 @@ type SECRET struct {	// данные для подключения к серви
 //----------------------------------------
 
 const (
-    Z2M = "zigbee2mqtt/"	// префикс топика
-    mqtt_broker_addr = "tcp://localhost:1883"
+    z2mconf_file = "./host/data/configuration.yaml"
+    mqtt_broker_addr = "tcp://localhost:1883"	// - можно взять из configuration.yaml
+    Z2M = "zigbee2mqtt/"	// префикс топика  - можно взять из configuration.yaml
+
     monitor_addr = "localhost:10101"
 )
 
@@ -115,7 +117,7 @@ func createService()(s service) {
         return
     }
 
-    log.Println("Создаём хранилище очередей сообщений")
+    log.Println("Создаём хранилище очередей сообщений.")
     if s.queue, err = bbolt.Open("./host/data/queue.db", 0600, &bbolt.Options{Timeout: 2 * time.Second}); err != nil {
         log.Println("FATAL_ERROR CreateQueueDB.Open:", err)
         return
@@ -130,8 +132,7 @@ func createService()(s service) {
     s.device_index = make(map[string]*ZBDev)	// Хранилище устройств
     s.sensor_event = make(chan *ZBDev)		// События от устройств
     s.messag_event = make(chan uint64)		// Событие-извещение для отправителя сообщений
-    loadDevicesConfig("./host/data/dev.json", s.device_index)	// конфигурации устройств
-
+    loadDevicesConfig(z2mconf_file, s.device_index)	// конфигурации устройств
 
     s.debugLog = false
 

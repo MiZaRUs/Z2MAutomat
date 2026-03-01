@@ -49,6 +49,7 @@ func (s *service) executeRules(sev *ZBDev) {	// стартует для кажд
 
 // проверить состояние батареек и расстояние:  sev.Digit("battery")  +  sev.Bool("battery_low")  +  sev.Digit("linkquality")
     if !sev.executor && sev.Bool("battery_low") {	// только для сенсоров с батарейным питанием !sev.executor
+        go s.sendNotification(10, sev.tmup, fmt.Sprintf("%s Батарейка разряжена. %s", sev.Name, sev.uid))
         log.Println("WARNING Требуется замена:", sev.uid, sev.Name, "Батарейка:", sev.Digit("battery"), "%" )
     }
     if d := sev.Digit("battery"); !sev.executor && d > 0 && d < 50 {

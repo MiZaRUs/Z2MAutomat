@@ -9,13 +9,35 @@ import (
     "fmt"
     "time"
     "sync"
-//    "strings"
     "strconv"
     "math"
     "encoding/json"
     "encoding/binary"
+    "gopkg.in/yaml.v3"
+    "os"
     "../ipc"
 )
+
+//----------------------------------------
+
+type Z2MDevice struct {
+    FriendlyName string `yaml:"friendly_name"`
+    Retain       bool   `yaml:"retain"`
+    Qos          byte   `yaml:"qos"`
+    Description  string `yaml:"description"`
+    HA struct {
+        Name    string `yaml:"name"`
+    } `yaml:"homeassistant"`
+}
+
+type Z2MConfig struct {
+    Vers          string `yaml:"version"`
+    MQTT  struct {
+        Btopic    string `yaml:"base_topic"`
+        Server    string `yaml:"server"`
+    } `yaml:"mqtt"`
+    Devices   map[string]Z2MDevice  `yaml:"devices"`
+}
 
 //----------------------------------------
 
@@ -34,36 +56,35 @@ type ZBDev struct {
 //---------------------------------------------------------------------------
 
 
-// * конфигурации устройств (НАДО загружать из файла !!! файл устройств общий для микросервисов
+// * конфигурации устройств загружаем из файла z2m configuration.yaml
+// * требуется скорректировать поля секции devices (можно через web-z2m)
+// description=название и homeassistant.name=параметры
 
-
-func loadDevicesConfig(conf string, index map[string]*ZBDev) {
+func loadDevicesConfig(conff string, index map[string]*ZBDev) {
     if index == nil { return }
+    yamlFile, err := os.ReadFile(conff)
+    if err != nil {
+        log.Println("ERROR loadDevicesConfig.ReadFile:", err)
+        return
+    }
+
+    var z2mconf Z2MConfig
+    err = yaml.Unmarshal(yamlFile, &z2mconf)
+    if err != nil {
+        log.Println("ERROR loadDevicesConfig.Unmarshal:", err)
+        return
+    }
+    log.Printf("Z2MConfig: version:%#v, mqtt_base_topic:%#v, mqtt_server:%#v, devices:%d", z2mconf.Vers, z2mconf.MQTT.Btopic, z2mconf.MQTT.Server, len(z2mconf.Devices))
+
     tmu := time.Now()
-
-// датчики протечки
-    index["0xa4c138ade4c67c34"] = &ZBDev{uid:"0xa4c138ade4c67c34", tmup:tmu, qos:2, Name:"Душевая, под умывальником"}	// "tamper":false,"water_leak":false
-    index["0xa4c138061ca5ff5a"] = &ZBDev{uid:"0xa4c138061ca5ff5a", tmup:tmu, qos:2, Name:"Туалет, за унитазом"}		// "tamper":false,"water_leak":false
-    index["0xa4c1384b234a0c7e"] = &ZBDev{uid:"0xa4c1384b234a0c7e", tmup:tmu, qos:2, Name:"Кухня, под раковиной"}	// "tamper":false,"water_leak":false - плохая батарея !!!
-
-// ручное управление
-    index["0x20a716fffef03087"] = &ZBDev{uid:"0x20a716fffef03087", tmup:tmu, qos:2, Name:"Кнопка-1" }		// action: "single", double", "long"
-    index["0xa4c1382b7c6b84f5"] = &ZBDev{uid:"0xa4c1382b7c6b84f5", tmup:tmu, qos:2, Name:"Кнопка, столовая" }	// action: "single", double", "hold"
-
-// присутствие
-    index["0xa4c138bf239fc880"] = &ZBDev{uid:"0xa4c138bf239fc880", tmup:tmu, qos:2, Name:"Кухня, присутствие"}	// presence: false, true    + Illuminance:int + presence_sensitivity + target_distance + detection_distance_{max|max}
-    index["0xa4c138acbd2987a4"] = &ZBDev{uid:"0xa4c138acbd2987a4", tmup:tmu, qos:2, Name:"Кухня, чайный стол"}	// presence: false, true    + Illuminance:int + presence_sensitivity + target_distance + detection_distance_{max|max}
-    index["0xa4c1387d9dbc566f"] = &ZBDev{uid:"0xa4c1387d9dbc566f", tmup:tmu, qos:2, Name:"Кухня, активность" }	// occupancy: false, true  + illuminance:int
-
-// климат
-    index["0xa4c138ac1692f499"] = &ZBDev{uid:"0xa4c138ac1692f499", tmup:tmu, qos:2, Name:"Кухня"}		// ,"humidity":24.5,"temperature":25.75
-    index["0xa4c1388d7520cf68"] = &ZBDev{uid:"0xa4c1388d7520cf68", tmup:tmu, qos:2, Name:"Кабинет"}		// ,"humidity":24.5,"temperature":25.75
-    index["0xa4c138d1df3edebd"] = &ZBDev{uid:"0xa4c138d1df3edebd", tmup:tmu, qos:2, Name:"Спальня"}		// ,"humidity":24.5,"temperature":25.75
-
-// executor
-    index["0xa4c138e98909dd43"] = &ZBDev{uid:"0xa4c138e98909dd43", executor:true, qos:0, Name:"Кухня - Освещение" }	// "state_l1:"OFF","ON" + "state_l2:"OFF","ON" + "state_l3:"OFF","ON" + "state_l4:"OFF","ON"
-    index["0x70b3d52b601780f4"] = &ZBDev{uid:"0x70b3d52b601780f4", executor:true, qos:0, Name:"Кухня - Фонарь" }	// "state":
-    index["0xa4c138853d5b9c40"] = &ZBDev{uid:"0xa4c138853d5b9c40", tmup:tmu, executor:true, qos:0, Name:"Кухня - Розетка"}	// "state":"OFF","ON"
+    for key, v := range z2mconf.Devices {
+        if key != "" && v.FriendlyName != "" && v.Description != "" {
+            exec := false
+            if len(v.HA.Name) > 7 && v.HA.Name[:8] == `executor` { exec = true }
+            index[key] = &ZBDev{uid:v.FriendlyName, tmup:tmu, executor:exec, qos:v.Qos, Name:v.Description}
+            log.Printf("K:%#v  uid:%#v  qos:%d  executor:%#v  name:%#v prm:%#v", key, v.FriendlyName, v.Qos, exec, v.Description, v.HA.Name)
+        }
+    }
 }
 
 //---------------------------------------------------------------------------
@@ -136,11 +157,11 @@ func (dev *ZBDev) Bool(str string) bool {
         case bool:
             return val
         case int:
-            if val == 0 { return false} else { return true }
+            if val == 0 { return false } else { return true }
         case float64:
-            if val == 0 { return false} else { return true }
+            if val == 0 { return false } else { return true }
         case string:
-            if val == "" { return false} else { return true }
+            if val == "" { return false } else { return true }
         }
     }
     return false
@@ -160,7 +181,7 @@ func (dev *ZBDev) Int(str string) int {
             v,_ := strconv.Atoi(val)
             return v
         case bool:
-            if val == true { return 1} else { return 0 }
+            if val == true { return 1 } else { return -1 }
         }
     }
     return 0
@@ -177,10 +198,10 @@ func (dev *ZBDev) Digit(str string) float64 {
         case int:
             return float64(val)
         case string:
-            v,_ := strconv.ParseFloat(val, 64)
-            return v
+            if v, er := strconv.ParseFloat(val, 64); er == nil { return v }
+            if val == "ON" { return 1 } else if val == "OFF" { return -1 }
         case bool:
-            if val == true { return 1} else { return 0 }
+            if val == true { return 1 } else { return -1 }
 //        default:
 //            log.Println("::::::::::::::++", act, val, fmt.Sprintf("T:%T", val))
         }
@@ -191,6 +212,7 @@ func (dev *ZBDev) Digit(str string) float64 {
 //---------------------------------------------------------------------------
 
 func (dev *ZBDev) SaveSensors(sens []string) {
+    if monitor_addr == "" || dev.uid == "" { return }
     var data []byte
     data = append(data, 1)							// 1 байт - тип пакета - метрика (1)
     for _, sn := range sens {	// упакуем имя и значения сенсоров
@@ -202,14 +224,14 @@ func (dev *ZBDev) SaveSensors(sens []string) {
         data = append(data, 0)							// завершим 0
     }
 //    log.Println("SaveSensors()", dev.uid, sens, len(data))
-    if dev.uid == "" || len(data) < 22 || len(data) > 250 { return }
+    if len(data) < 22 || len(data) > 250 { return }
     if er := ipc.SendSHAMsg(monitor_addr, data); er != nil { log.Println("ERROR ipc.SendSHAMsg()", er) }
 }
 
 //---------------------------------------------------------------------------
 
 func (dev *ZBDev) SaveExecutorState() {
-    if !dev.executor || dev.uid == "" || dev.status == nil { return }
+    if !dev.executor || monitor_addr == "" || dev.uid == "" || dev.status == nil { return }
 //    log.Println("SaveExecutorStatus():", dev.uid, dev.Name)
     var sensors = []string{"state","state_l1","state_l2","state_l3","state_l4"}	// 1 или 4 реле, до 32
     var res = uint64(0)
