@@ -81,7 +81,8 @@ func loadDevicesConfig(conff string, index map[string]*ZBDev) {
         if key != "" && v.FriendlyName != "" && v.Description != "" {
             exec := false
             if len(v.HA.Name) > 7 && v.HA.Name[:8] == `executor` { exec = true }
-            index[key] = &ZBDev{uid:v.FriendlyName, tmup:tmu, executor:exec, qos:v.Qos, Name:v.Description}
+//            index[key] = &ZBDev{uid:v.FriendlyName, tmup:tmu, executor:exec, qos:v.Qos, Name:v.Description}
+            index[v.FriendlyName] = &ZBDev{uid:v.FriendlyName, tmup:tmu, executor:exec, qos:v.Qos, Name:v.Description}
             log.Printf("K:%#v  uid:%#v  qos:%d  executor:%#v  name:%#v prm:%#v", key, v.FriendlyName, v.Qos, exec, v.Description, v.HA.Name)
         }
     }
@@ -93,8 +94,8 @@ func loadDevicesConfig(conff string, index map[string]*ZBDev) {
 // * Обновление состояния устройства.
 
 func (db *service) updateZ2MDevice(uid string, jsmsg []byte) *ZBDev{	// 
-    db.mut.Lock()
-    defer db.mut.Unlock()
+    db.mut.RLock()
+    defer db.mut.RUnlock()
     if dx, ok := db.device_index[uid]; ok && dx != nil {
         dx.mut.Lock()
         defer dx.mut.Unlock()
@@ -129,8 +130,18 @@ func (db *service) updateZ2MDevice(uid string, jsmsg []byte) *ZBDev{	//
 
 //---------------------------------------------------------------------------
 
+func (dev *ZBDev) setString(key, val string) error {
+    if dev.status == nil || key == "" || val == "" { return fmt.Errorf("set failed") }
+    dev.mut.Lock()
+    defer dev.mut.Unlock()
+    dev.status[key] = val
+    return nil
+}
+
+//---------------------------------------------------------------------------
+
 func (dev *ZBDev) String(str string) string {
-    if dev.uid == "" || dev.status == nil { return "" }
+    if dev.status == nil || str == "" { return "" }
     dev.mut.RLock()
     defer dev.mut.RUnlock()
     if act, ok := dev.status[str]; ok && act != nil {
@@ -149,7 +160,7 @@ func (dev *ZBDev) String(str string) string {
 }
 
 func (dev *ZBDev) Bool(str string) bool {
-    if dev.uid == "" || dev.status == nil { return false }
+    if dev.status == nil || str == "" { return false }
     dev.mut.RLock()
     defer dev.mut.RUnlock()
     if act, ok := dev.status[str]; ok && act != nil {
@@ -168,7 +179,7 @@ func (dev *ZBDev) Bool(str string) bool {
 }
 
 func (dev *ZBDev) Int(str string) int {
-    if dev.uid == "" || dev.status == nil { return 0 }
+    if dev.status == nil || str == "" { return 0 }
     dev.mut.RLock()
     defer dev.mut.RUnlock()
     if act, ok := dev.status[str]; ok && act != nil {
@@ -188,7 +199,7 @@ func (dev *ZBDev) Int(str string) int {
 }
 
 func (dev *ZBDev) Digit(str string) float64 {
-    if dev.uid == "" || dev.status == nil { return 0 }
+    if dev.status == nil || str == "" { return 0 }
     dev.mut.RLock()
     defer dev.mut.RUnlock()
     if act, ok := dev.status[str]; ok && act != nil {
