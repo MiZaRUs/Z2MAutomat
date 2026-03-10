@@ -39,55 +39,6 @@ func (s *service) sendNotification(level uint64, tm time.Time, msg string){
 }
 //---------------------------------------------------------------------------
 
-func (s *service) procStatusMonitor() {       // Мониторинг состояния, с генерацией событий по каким-либо признакам.
-    defer log.Printf("ERROR Завершён процесс мониторинга!")
-
-    checkact_ticker := time.NewTicker(time.Minute * 10)		// 10 минутный ТАЙМЕР
-    update_ticker   := time.NewTicker(time.Hour)		// часовой ТАЙМЕР
-    go func() {
-        for range checkact_ticker.C {
-            s.messag_event <- 0xFFFFFFF8
-        }
-    }()
-    go func() {
-        for range update_ticker.C {
-            s.messag_event <- 0xFFFFFFFF
-        }
-    }()
-
-    log.Printf("Стартуем процесс мониторинга.")
-    for {
-        time.Sleep(time.Millisecond * time.Duration(10))
-        if lvl := <- s.messag_event; lvl > 0 {
-            tmnow := time.Now()
-
-            if lvl < 100 { s.checkNotification(tmnow, lvl) }	// level 1...99 - отправить оповещение если есть!
-
-// НАДО проверку незавершенных таймеров ???
-
-            if lvl == 0xFFFFFFF8 { // каждые 10 минут
-                log.Println("#10")
-                s.checkNotification(tmnow, 0)			// проверить состояние системы оповещений
-            }
-
-            if lvl == 0xFFFFFFFF { // раз в час
-                log.Println("#####################    ЧАСОВОЙ ТАЙМЕР    #####################")
-
-                s.mut.RLock()
-                for i, d := range s.device_index {          // Проверить обновление данных
-                    if tmx := int(tmnow.Sub(d.tmup).Seconds()); tmx >= (3600 * 24 * 2) {    // час*n*s
-                        log.Println("WARNING АВАРИЯ", i, d.Name, "TMUP:", tmx, "Нет данных !!!" )           // АВАРИЯ !!!!
-                        d.tmup = time.Now()                 // сброс аварии
-                    }
-                }
-                s.mut.RUnlock()
-            } // часовой
-        } // chan
-    } // for безусловный
-}
-
-//---------------------------------------------------------------------------
-
 func (s *service) checkNotification(tmnow time.Time, lvl uint64) {
     if s.queue == nil { return }
 //    log.Println("checkNotification ", lvl)
@@ -153,8 +104,7 @@ func (s *service) checkNotification(tmnow time.Time, lvl uint64) {
 // НАДО поиск неотправленных до очистки кэша !!!
 
             level := binary.BigEndian.Uint64(lvl)
-            if bucket != nil { log.Println("QueueDB.Clear-X:", level, bucket.Stats().KeyN) }
-
+//            if bucket != nil { log.Println("QueueDB.Clear-X:", level, bucket.Stats().KeyN) }
             if bucket != nil && bucket.Stats().KeyN > 0 {
                 ddel := time.Duration(60)			// временное хранение	60*25 час
                 if level == 0 { ddel = 10 }			// кэш 5-15 минут	!!!!!!!!!!!!!!!!!!!!!!!
@@ -163,7 +113,7 @@ func (s *service) checkNotification(tmnow time.Time, lvl uint64) {
                 c := bucket.Cursor()
                 for tmu, msg := c.Seek(ipc.Uint2Array(maxd)); tmu != nil; tmu, _ = c.Prev() {
                     if binary.BigEndian.Uint64(tmu) < maxd {
-                        log.Printf("-- DELETE: lvl:%d  TM:%s  Msg%s", level, time.UnixMilli(int64(binary.BigEndian.Uint64(tmu))).Format("2006-01-02 15:04:05.000"), string(msg) )
+                        log.Printf("-- DELETE: lvl:%d  TM:%s  Msg:%s", level, time.UnixMilli(int64(binary.BigEndian.Uint64(tmu))).Format("2006-01-02 15:04:05.000"), string(msg) )
                         bucket.Delete(tmu) // удалить старые оповещения !!!
                     }
                 }
