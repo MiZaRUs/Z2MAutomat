@@ -37,8 +37,8 @@ const (
 //----------------------------------------
 
 type service struct {
-//    mut     sync.Mutex
-    mut      sync.RWMutex
+    mut     sync.RWMutex
+    muttim  sync.RWMutex
     queue   *bbolt.DB			// Очередь важных сообщений
     secret   SECRET
 
