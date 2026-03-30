@@ -12,8 +12,12 @@ import (
     "encoding/binary"
     "net/http"
     "io/ioutil"
+    "context"
+    firebase "firebase.google.com/go"
+    "firebase.google.com/go/messaging"
+    "google.golang.org/api/option"
     "go.etcd.io/bbolt"
-    "../ipc"
+    "ipc"
 )
 
 //----------------------------------------
@@ -37,6 +41,7 @@ func (s *service) sendNotification(level uint64, tm time.Time, msg string){
     }
     s.messag_event <- level
 }
+
 //---------------------------------------------------------------------------
 
 func (s *service) checkNotification(tmnow time.Time, lvl uint64) {
@@ -68,6 +73,7 @@ func (s *service) checkNotification(tmnow time.Time, lvl uint64) {
                 maxd := uint64(tmnow.Add(-10*time.Minute).UnixMilli())	// 10 минут !!!!!!!!!!!!!!!
                 cashe.ForEach(func(tmu []byte, msg []byte) error {
                     if tmu != nil && msg != nil && binary.BigEndian.Uint64(tmu) > maxd && bytes.Compare(tmp_msg, msg) == 0 {	// сравнить сообщение с кэшем отправки !!! не устарело
+                        log.Println(" ------------------------- УЖЕ отправлено недавно!")
                         tmp_tmu = nil
                         tmp_msg = nil
                     }
@@ -79,7 +85,12 @@ func (s *service) checkNotification(tmnow time.Time, lvl uint64) {
 
 
         if tmp_tmu != nil && tmp_msg != nil {
-            if err := telegramSend(&s.secret, string(tmp_msg)); err == nil {
+            tmu := binary.BigEndian.Uint64(tmp_tmu)
+            mid := tmu - 1774698000000
+            log.Printf(" ------------------------- ОТПРАВИТЬ: lvl:%d  TM:%s  Msg%s", lvl, time.UnixMilli(int64(tmu)).Format("2006-01-02 15:04:05.000"), string(tmp_msg) )
+
+//            if err := telegramSend(&s.secret, string(tmp_msg));	- звблокирован :(
+            if err := fcmSend(&s.secret, fmt.Sprintf("%d",mid), fmt.Sprintf("%d",tmu), "Домовой", string(tmp_msg)); err == nil {	// for mobile FCM-app
                 if err := s.queue.Update(func(tx *bbolt.Tx) error {
                     if cashe, err := tx.CreateBucketIfNotExists(ipc.Uint2Array(0)); err == nil && cashe != nil {	// Получим корзину (кэш) - отправленные
                         return cashe.Put(tmp_tmu, tmp_msg)
@@ -91,8 +102,11 @@ func (s *service) checkNotification(tmnow time.Time, lvl uint64) {
                     return
                 }
             } else {
-                log.Println("ERROR QueueDB.Notification.telegrammSend:", err)
+                log.Println("ERROR QueueDB.Notification.Send:", err)
             }
+
+
+
         }
 
     } // level 1..99
@@ -124,6 +138,37 @@ func (s *service) checkNotification(tmnow time.Time, lvl uint64) {
     }); err != nil {
         log.Println("ERROR QueueDB.Notification-X:", err)
     }
+}
+
+//---------------------------------------------------------------------------
+
+func fcmSend(srt *SECRET, mid, tmu, tag, msg string) error {	// for mobile FCM-app
+    message := &messaging.Message{
+        Data: map[string]string{
+            "mid": mid,
+            "tmu": tmu,
+            "tag": tag,
+            "msg": msg,
+        },
+        Topic: srt.FCMTopic,
+    }
+    opt := option.WithCredentialsFile("./host/data/"+srt.FCMFile)
+    ctx := context.Background()
+    app, err := firebase.NewApp(ctx, nil, opt)
+    if err != nil {
+        return fmt.Errorf("initializing fcmSend: %v", err)
+    }
+
+    client, err := app.Messaging(ctx)
+    if err != nil {
+        return fmt.Errorf("client fcmSend: %v", err)
+    }
+    response, err := client.Send(ctx, message)
+    if err != nil {
+        return fmt.Errorf("fatal fcmSend: %v", err)
+    }
+    log.Println("Successfully sent message:", response)
+    return nil
 }
 
 //---------------------------------------------------------------------------
