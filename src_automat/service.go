@@ -19,9 +19,11 @@ import (
 )
 //----------------------------------------
 
-type SECRET struct {	// данные для подключения к сервисам оповещения (telegram, jabber, mail or FCM)
-    TgToken  string `json:"tg_token"`
-    TgChatID string `json:"tg_chatid"`
+type SECRET struct {    // данные для подключения к сервисам оповещения (FCM, telegram, jabber, mail ... )
+    FCMFile   string `json:"fcm_file"`
+    FCMTopic  string `json:"fcm_topic"`
+    TgToken   string `json:"tg_token"`
+    TgChatID  string `json:"tg_chatid"`
 }
 
 //----------------------------------------

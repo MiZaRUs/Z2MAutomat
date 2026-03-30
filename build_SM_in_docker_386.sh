@@ -3,6 +3,7 @@
 # Сборка докер-образа сервиса.
 #
 APP=z2m_monitoring
+SRC=src_monitor
 ####
 #
 if [ -d ./Build ]; then
@@ -11,17 +12,17 @@ else
     mkdir Build
 fi
 #
-cp -r ./Docker ./Build/
-echo "CMD [\"./${APP}\"]" >> ./Build/Docker/Dockerfile
-cp -r ./src_monitor/*.go ./Build/
-cd ./Build/
-#GO111MODULE=off CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o $APP
-GO111MODULE=off CGO_ENABLED=0 GOOS=linux GOARCH=386 go build -a -installsuffix cgo -o $APP
+mkdir ./Build/srv
+cd ./Build/srv
+CGO_ENABLED=0 GOOS=linux GOARCH=386 go build -a -installsuffix cgo -o $APP ../../$SRC
 if [ -f "$APP" ]; then
-    mkdir ./Docker/srv
-    mv $APP ./Docker/srv/
+    cd ../
+    cp -r ../Docker ./
+    echo "CMD [\"./${APP}\"]" >> ./Docker/Dockerfile
+    tar -czvf ./Docker/srv.tar.gz srv
     cd ./Docker
-    tar -czvf srv.tar.gz srv
+#    docker rmi $APP
+#    docker build --label=$APP -t $APP .
 #    docker buildx build --platform linux/arm64 --label=$APP -t $APP .
     docker buildx build --platform linux/i386 --label=$APP -t $APP .
     cd ..
@@ -38,7 +39,7 @@ fi
 if [[ -f "${APP}.tar" && $(stat -c %s "${APP}.tar") -gt 400 ]]; then
     echo ""
     echo "$(date "+%F %H:%M:%S")  scp >>"
-#    scp "${APP}.tar" buka.home:/opt/Z2MMonitor/
+#    scp "${APP}.tar" buka.home:/opt/Z2MAutomat/
     echo "   ***"
 else
     echo ""

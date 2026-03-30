@@ -15,7 +15,7 @@ import (
     "encoding/binary"
     "gopkg.in/yaml.v3"
     "os"
-    "../ipc"
+    "ipc"
 )
 
 //----------------------------------------
