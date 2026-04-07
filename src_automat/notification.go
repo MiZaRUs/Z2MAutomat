@@ -7,154 +7,117 @@ package main
 import (
     "log"
     "fmt"
-    "bytes"
     "time"
-    "encoding/binary"
-    "net/http"
-    "io/ioutil"
+    "encoding/json"
+//    "encoding/binary"
+//    "go.etcd.io/bbolt"
+//    "ipc"
+    "os"
+    "runtime/debug"
     "context"
     firebase "firebase.google.com/go"
     "firebase.google.com/go/messaging"
     "google.golang.org/api/option"
-    "go.etcd.io/bbolt"
-    "ipc"
 )
 
 //----------------------------------------
-//Level   -  Bucket
+
+type MESSAGE struct {
+    tm   time.Time
+    tag  string
+    msg  string
+}
+
+type SECRET struct {    // данные для подключения к сервисам оповещения (FCM, telegram, jabber, mail ... )
+    FCMFile   string	`json:"fcm_file"`
+    FCMTopic  string	`json:"fcm_topic"`
+//    MailBox  string	`json:"mailbox"`
+//    MailPSWD string	`json:"mailpswd"`
+//    TgToken   string	`json:"tg_token"`
+//    TgChatID  string	`json:"tg_chatid"`
+}
+
+type NOTIFICATION struct {
+    FCMOption option.ClientOption
+    secret    SECRET			// данные для подключения к внешним сервисам
+//    storage   *bbolt.DB			// хранилище всех оповещений
+    messag_event  chan MESSAGE		// Событие-извещение для отправителя сообщений
+}
+
+//----------------------------------------
+//   -  Bucket
 //TMU     -  key
 //msg     -  val
 //---------------------------------------------------------------------------
 
-func (s *service) sendNotification(level uint64, tm time.Time, msg string){
-    if s.queue == nil || level < 1 || level > 99 || msg == "" { return }
-    log.Println("sendNotification():", level, tm.Format("2006-01-02 15:04:05.000"), msg )
-// level 1 - Авария (Протечка, взлом) 2 - прочее до 99
-    if err := s.queue.Update(func(tx *bbolt.Tx) error {
-        if bucket, err := tx.CreateBucketIfNotExists(ipc.Uint2Array(level)); err == nil && bucket != nil {
-            return bucket.Put(ipc.Uint2Array(uint64(tm.UnixMilli())), []byte(msg))
-        } else if err != nil { return err }
-            return nil
-    }); err != nil {
-        log.Println("ERROR pushNotification:", err)
+func (nn *NOTIFICATION) Send(tm time.Time, tag, msg string){	// Оповещения		Информация, Внимыние!, АВАРИЯ!
+    if nn.messag_event != nil { nn.messag_event <- MESSAGE{tm:tm, tag:tag, msg:msg} }	// упорядочить
+}
+
+//---------------------------------------------------------------------------
+
+func (nn *NOTIFICATION) Create( pat string){
+    log.Println("Создаём менеджер оповещений:"+pat+"/queue.db")
+    if jsf, err := os.ReadFile(pat+"/secret.json"); err != nil || json.Unmarshal(jsf, &nn.secret) != nil {
+        nn.secret = SECRET{}
+        log.Println("WARNING Ошибка файла secret.json:", err)
+    } else if nn.secret.FCMFile != "" {
+        nn.FCMOption = option.WithCredentialsFile(pat+"/"+nn.secret.FCMFile)
+    }
+    if len(nn.secret.FCMFile) < 14 || len(nn.secret.FCMTopic) < 3 {  // Проверить конфигурацию оповещений
+        log.Println("\n*********************************************************************\n \t\t\t\tНет информации для оповещателя ! \n*********************************************************************")
         return
     }
-    s.messag_event <- level
+
+    nn.messag_event = make(chan MESSAGE, 7)                // канал событий-извещений для отправителя оповещений
+
+    go func (){
+        defer nn.recoveryNotification()
+        for{                                // Ожидание событий и запуск процесса оповещений
+            time.Sleep(time.Millisecond * time.Duration(10))
+            if ev, ok := <- nn.messag_event; ok && ev.tm.Unix() > 10000 && ev.msg != "" {
+                go func() {
+
+                    if err := nn.fcmSend(ev); err != nil {
+                        log.Println("ERROR FCM SendMessage:", err)
+                        log.Println(" ++++++ Send2Mail +++++++", ev)	// НАДО при ошибке FCM отправлять на почту
+                    }
+
+                    if ev.tag == "АВАРИЯ!" {				// НАДО тег "АВАРИЯ!" продублировать на почту
+                        log.Println(" ++++++ Send2Mail +++++++", ev)
+                    }
+                }()
+            } else if !ok { break }
+        } // for безусловный
+    }()
 }
 
 //---------------------------------------------------------------------------
 
-func (s *service) checkNotification(tmnow time.Time, lvl uint64) {
-    if s.queue == nil { return }
-//    log.Println("checkNotification ", lvl)
-
-    if lvl > 0 && lvl < 100 {	// level 1..99 - свежие сообщение
-        var tmp_tmu []byte
-        var tmp_msg []byte
-
-        if err := s.queue.View(func(tx *bbolt.Tx) error {
-            level := tx.Bucket(ipc.Uint2Array(lvl))		// Получим корзину (level)
-            if level != nil {
-                if tmu, msg := level.Cursor().Last(); tmu != nil && msg != nil  && (tmnow.UnixMilli() - int64(binary.BigEndian.Uint64(tmu))) < 2000 {	// 2 sec последнее свежие сообщение
-                    tmp_tmu = tmu
-                    tmp_msg = msg
-                    return nil
-                }
-            }
-            return fmt.Errorf("очень плохо, нет такого сообщения!")	// ПРОБЛЕМА !!!
-        }); err != nil {
-            log.Println("ERROR QueueDB.Notification-t1:", err)
-        }
-        if tmp_tmu == nil || tmp_msg == nil { return }	// Обязательно должно быть свежее сообщение !!!
-
-
-        if err := s.queue.View(func(tx *bbolt.Tx) error {		// Поиск дубля в кэше
-            if cashe := tx.Bucket(ipc.Uint2Array(0)); cashe != nil {	// Получим корзину (0) - отправленные, последнее свежие сообщение
-                maxd := uint64(tmnow.Add(-10*time.Minute).UnixMilli())	// 10 минут !!!!!!!!!!!!!!!
-                cashe.ForEach(func(tmu []byte, msg []byte) error {
-                    if tmu != nil && msg != nil && binary.BigEndian.Uint64(tmu) > maxd && bytes.Compare(tmp_msg, msg) == 0 {	// сравнить сообщение с кэшем отправки !!! не устарело
-                        log.Println(" ------------------------- УЖЕ отправлено недавно!")
-                        tmp_tmu = nil
-                        tmp_msg = nil
-                    }
-                    return nil
-                })
-            }
-            return nil
-        }); err != nil { log.Println("ERROR QueueDB.Notification-t2:", err) }
-
-
-        if tmp_tmu != nil && tmp_msg != nil {
-            tmu := binary.BigEndian.Uint64(tmp_tmu)
-            mid := tmu - 1774698000000
-            log.Printf(" ------------------------- ОТПРАВИТЬ: lvl:%d  TM:%s  Msg%s", lvl, time.UnixMilli(int64(tmu)).Format("2006-01-02 15:04:05.000"), string(tmp_msg) )
-
-//            if err := telegramSend(&s.secret, string(tmp_msg));	- звблокирован :(
-            if err := fcmSend(&s.secret, fmt.Sprintf("%d",mid), fmt.Sprintf("%d",tmu), "Домовой", string(tmp_msg)); err == nil {	// for mobile FCM-app
-                if err := s.queue.Update(func(tx *bbolt.Tx) error {
-                    if cashe, err := tx.CreateBucketIfNotExists(ipc.Uint2Array(0)); err == nil && cashe != nil {	// Получим корзину (кэш) - отправленные
-                        return cashe.Put(tmp_tmu, tmp_msg)
-                    } else {
-                        return err
-                    }
-                }); err != nil {
-                    log.Println("ERROR QueueDB.Notification-t3:", err)
-                    return
-                }
-            } else {
-                log.Println("ERROR QueueDB.Notification.Send:", err)
-            }
-
-
-
-        }
-
-    } // level 1..99
-
-
-    if err := s.queue.Update(func(tx *bbolt.Tx) error {		// Чистка БД
-        tx.ForEach(func(lvl []byte, bucket *bbolt.Bucket) error { // Получим все корзины (уровни оповещений)
-
-// НАДО поиск неотправленных до очистки кэша !!!
-
-            level := binary.BigEndian.Uint64(lvl)
-//            if bucket != nil { log.Println("QueueDB.Clear-X:", level, bucket.Stats().KeyN) }
-            if bucket != nil && bucket.Stats().KeyN > 0 {
-                ddel := time.Duration(60)			// временное хранение	60*25 час
-                if level == 0 { ddel = 10 }			// кэш 5-15 минут	!!!!!!!!!!!!!!!!!!!!!!!
-                if level == 1 { ddel = 60*3 }			// длительное хранение 3 суток Duration(60*24*3)
-                maxd := uint64(tmnow.Add(-1*ddel * time.Minute).UnixMilli())
-                c := bucket.Cursor()
-                for tmu, msg := c.Seek(ipc.Uint2Array(maxd)); tmu != nil; tmu, _ = c.Prev() {
-                    if binary.BigEndian.Uint64(tmu) < maxd {
-                        log.Printf("-- DELETE: lvl:%d  TM:%s  Msg:%s", level, time.UnixMilli(int64(binary.BigEndian.Uint64(tmu))).Format("2006-01-02 15:04:05.000"), string(msg) )
-                        bucket.Delete(tmu) // удалить старые оповещения !!!
-                    }
-                }
-            }
-            return nil
-        })
-        return nil
-    }); err != nil {
-        log.Println("ERROR QueueDB.Notification-X:", err)
+func (nn *NOTIFICATION) recoveryNotification() { // При сбоях в работе сервиса
+    if recoveryMessage := recover(); recoveryMessage != nil {
+        log.Println("recoveryNotification():", recoveryMessage, string(debug.Stack()), "\n****\n")
     }
 }
 
 //---------------------------------------------------------------------------
 
-func fcmSend(srt *SECRET, mid, tmu, tag, msg string) error {	// for mobile FCM-app
+func (nn *NOTIFICATION) fcmSend(v MESSAGE) error {	// for mobile FCM-app
+    priority := "normal"
+    if len(v.tag) > 0 && v.tag[len(v.tag)-1] == '!' { priority = "high" }
+    log.Println(" >>>>>>>>>>>>>>>> fcmSend():", priority, v.tm.Format("2006-01-02 15:04:05.000"), v.tag, v.msg )
+
     message := &messaging.Message{
+        Android: &messaging.AndroidConfig{Priority: priority}, // Установка высокого приоритета [4, 5]
         Data: map[string]string{
-            "mid": mid,
-            "tmu": tmu,
-            "tag": tag,
-            "msg": msg,
+            "tmu": fmt.Sprintf("%d",v.tm.UnixMilli()),
+            "tag": v.tag,
+            "msg": v.msg,
         },
-        Topic: srt.FCMTopic,
+        Topic: nn.secret.FCMTopic,
     }
-    opt := option.WithCredentialsFile("./host/data/"+srt.FCMFile)
     ctx := context.Background()
-    app, err := firebase.NewApp(ctx, nil, opt)
+    app, err := firebase.NewApp(ctx, nil, nn.FCMOption)	// option.WithCredentialsFile("./host/data/"+srt.FCMFile)
     if err != nil {
         return fmt.Errorf("initializing fcmSend: %v", err)
     }
@@ -169,36 +132,6 @@ func fcmSend(srt *SECRET, mid, tmu, tag, msg string) error {	// for mobile FCM-a
     }
     log.Println("Successfully sent message:", response)
     return nil
-}
-
-//---------------------------------------------------------------------------
-
-func telegramSend(srt *SECRET, msg string) error {		//         telegrammSend(&secret, message)
-    if len(msg) < 3 { msg += "???" }
-    qstr := `{"chat_id":"`+srt.TgChatID+`","text":"`+msg+`"}`
-    req, err := http.NewRequest( "POST", "https://api.telegram.org/bot"+srt.TgToken+"/sendMessage", bytes.NewBufferString(qstr))
-    if err == nil {
-        req.ContentLength = int64(len(qstr))
-        req.Header.Add("Content-Type", "application/json")
-        req.Header.Add("Content-Length", fmt.Sprintf("%d", req.ContentLength))
-        req.Header.Add("User-Agent", "SMonitor")
-
-        client := &http.Client{}
-        resp, err := client.Do(req)
-        if err == nil {
-            defer resp.Body.Close()
-
-            if resp.StatusCode == 200 {
-                if res, er := ioutil.ReadAll(resp.Body); er == nil {
-                    log.Println("telegrammSend RES:", string(res))	// НАДО проверить результат
-                    return nil
-                } else { err = er }
-            }
-            err = fmt.Errorf("resp.StatusCode:%d", resp.StatusCode)
-        }
-        return err
-    }
-    return err
 }
 
 //---------------------------------------------------------------------------

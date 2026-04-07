@@ -7,7 +7,6 @@ package main
 import (
     "log"
     "fmt"
-    "time"
     "strings"
 )
 //----------------------------------------
@@ -35,15 +34,15 @@ func (s *service) executeRules(sev *ZBDev) {	// стартует для кажд
 
 // проверить состояние батареек и расстояние:  sev.Digit("battery")  +  sev.Bool("battery_low")  +  sev.Digit("linkquality")
     if !sev.executor && sev.Bool("battery_low") {	// только для сенсоров с батарейным питанием !sev.executor
-        go s.sendNotification(10, sev.tmup, fmt.Sprintf("%s Батарейка разряжена. %s", sev.Name, sev.uid))
+        s.notification.Send(sev.tmup, "Внимание!", fmt.Sprintf("%s Батарейка разряжена. %s", sev.Name, sev.uid))
         log.Println("WARNING Требуется замена:", sev.uid, sev.Name, "Батарейка:", sev.Digit("battery"), "%" )
     }
     if d := sev.Digit("battery"); !sev.executor && d > 0 && d < 50 {
-        go s.sendNotification(10, sev.tmup, fmt.Sprintf("%s Батарейка низкий заряд. %s", sev.Name, sev.uid))
+        s.notification.Send(sev.tmup, "Информация.", fmt.Sprintf("%s Батарейка низкий заряд (%d %%). %s", sev.Name, d, sev.uid))
         log.Println("WARNING Низкий заряд:", sev.uid, sev.Name, "Батарейка:", d, "%" )
     }
     if d := sev.Digit("linkquality"); d > 0 && d < 50 {
-        go s.sendNotification(10, sev.tmup, fmt.Sprintf("Устройство %s слабый сигнал. %s", sev.Name, sev.uid))
+        s.notification.Send(sev.tmup, "Внимание!", fmt.Sprintf("Устройство %s слабый сигнал (%d). %s", sev.Name, d, sev.uid))
         log.Println("WARNING Датчик плохо слышно:", sev.uid, sev.Name, d )
     }
 
@@ -52,7 +51,7 @@ func (s *service) executeRules(sev *ZBDev) {	// стартует для кажд
     case "0xa4c138ade4c67c34", "0xa4c1384b234a0c7e", "0xa4c138061ca5ff5a":	// Протечка !!! // "tamper":false,"water_leak":false
         log.Println(" ::::::::::::ТЕСТ:", sev.uid, sev.Name, "ПРОТЕЧКА?", sev.lastst, sev.Bool("water_leak"))
         if sev.Bool("water_leak") {
-            go s.sendNotification(1, sev.tmup, fmt.Sprintf("АВАРИЯ:ПРОТЕЧКА! %s", sev.Name))
+            s.notification.Send(sev.tmup, "АВАРИЯ!", fmt.Sprintf("ПРОТЕЧКА! %s", sev.Name))
             log.Println("WARNING АВАРИЯ:", sev.uid, sev.Name, "ПРОТЕЧКА!")
         }
 
@@ -60,10 +59,10 @@ func (s *service) executeRules(sev *ZBDev) {	// стартует для кажд
     case "0xa4c138d0363d10d0":							// Дверь входная - contact: false, true    + Illuminance:int Проверяем датчик открытия и освещения
         sev.SaveSensors([]string{"contact", "illuminance"})			// сохранить в БД
         if sev.Bool("contact") {						// Проверяем датчик
-            if sev.lastst { go s.sendNotification(2, sev.tmup, "Дверь-Закрыта.") }
+//            if sev.lastst { s.sendNotification(sev.tmup, "Домовой", "Дверь-Закрыта.") }
             log.Println(" <<<[X]>>>", sev.Name, "Закрыта:", sev.uid, sev.Int("illuminance"))
         } else {
-            go s.sendNotification(2, sev.tmup, "Дверь-Открыта.")
+            s.notification.Send(sev.tmup, "Домовой!", "Дверь-Открыта.")
             log.Println(" <<<[_]>>>", sev.Name, "Открыта:", sev.uid, sev.Int("illuminance"))
         }
 
@@ -90,7 +89,7 @@ func (s *service) executeRules(sev *ZBDev) {	// стартует для кажд
         case "long":
             log.Println("WARNING Кнопка:", sev.uid, "Погасить ВСЁ! и Запретить автоматику!")
             s.automatic = false
-            go s.executeAllOFF()
+            s.executeAllOFF()
         }
 
 
@@ -168,7 +167,7 @@ func (s *service) executeRules(sev *ZBDev) {	// стартует для кажд
 // Чайный стол
     case "0xa4c138acbd2987a4":		// Чайный стол - Присутствие (микроволновый) presence: false, true    + Illuminance:int + presence_sensitivity + target_distance
         if sev.Bool("presence") && sev.Int("illuminance") < 1000 && sev.Int("target_distance") < 130 { // && sev.lastst 			// Проверяем датчик присутствия
-            log.Println(" + Чайный стол:",sev.uid, sev.Bool("presence"), sev.lastst, sev.Int("illuminance"), " Distance:",sev.Int("target_distance") )
+//            log.Println(" + Чайный стол:",sev.uid, sev.Bool("presence"), sev.lastst, sev.Int("illuminance"), " Distance:",sev.Int("target_distance") )
             if dx, ok := s.device_index["0xa4c138e98909dd43"]; ok && dx != nil && dx.uid != "" && dx.executor && dx.String("state_l1") != "ON" {	// реле 4 шт. Чайный стол и Столовая - освещение Смотрим статус исполнителя (ON|OFF)
                 s.startTimerW(120, nameActivityInTheTeaTable)	// Timer - действие отложенное на 120 сек
                 s.publish(Z2M+dx.uid+"/set", dx.qos, false, `{"state_l1":"ON"}`)
@@ -214,7 +213,7 @@ func (s *service) executeRules(sev *ZBDev) {	// стартует для кажд
         if lid := strings.Split(sev.uid, `#`); len(lid)==2 && len(lid[0])==18 && len(lid[1])>7 {	// внутренние события (таймер...)
             if prm := strings.Split(lid[1], `:`); len(prm)==2 && len(prm[0])>5 && len(prm[1])>0 {	// разберём параметры
                 state := prm[0][2:len(prm[0])-1]
-                if dx, ok := s.device_index[lid[0]]; ok && dx != nil && dx.uid != "" && dx.executor && dx.String(state) != "OFF" {		// Смотрим статус исполнителя (ON|OFF)
+                if dx, ok := s.device_index[lid[0]]; ok && dx != nil && dx.uid != "" && dx.executor && dx.String(state) != "OFF" {	// Смотрим статус исполнителя (ON|OFF)
                     s.publish(Z2M+dx.uid+"/set", dx.qos, false, lid[1])
                 }
             }
@@ -238,32 +237,16 @@ func (s *service)turnOFFKitchen() {	// Требуется предварител
     if dx, ok := s.device_index["0xa4c138e98909dd43"]; ok && dx != nil && dx.uid != "" && dx.executor  && dx.String("state_l4") != "OFF" {	// реле 4 шт. ночник
         s.publish(Z2M+dx.uid+"/set" , dx.qos, false, `{"state_l4":"OFF"}`)
     }
-    if dx, ok := s.device_index["0x70b3d52b601780f4"]; ok && dx != nil && dx.uid != "" && dx.executor && dx.String("state") != "OFF" {		// реле - выключатель. Фонарь
+    if dx, ok := s.device_index["0x70b3d52b601780f4"]; ok && dx != nil && dx.uid != "" && dx.executor && dx.String("state") != "OFF" {	// реле - выключатель. Фонарь
         s.publish(Z2M+dx.uid+"/set" , dx.qos, false, `{"state":"OFF"}`)
     }
-    if dx, ok := s.device_index["0xa4c138853d5b9c40"]; ok && dx != nil && dx.executor && dx.uid != "" && dx.String("state") != "OFF" {		// Розетка. Кухня - Разделочный стол.
+    if dx, ok := s.device_index["0xa4c138853d5b9c40"]; ok && dx != nil && dx.executor && dx.uid != "" && dx.String("state") != "OFF" {	// Розетка. Кухня - Разделочный стол.
         s.publish(Z2M+dx.uid+"/set", dx.qos, false, `{"state":"OFF"}`)
     }
-
-// НАДО проверку на освещенность, постораться выяснить светит или нет в зависимости от времени !!!
-    tmh := time.Now().Hour()	// дополнительно можно прикинуть по калкндарю
-    var a1, a2, a3 int
-    if dx, ok := s.device_index["0xa4c138bf239fc880"]; ok && dx != nil && dx.uid != "" {	// "Кухня, присутствие"}
-        if a := dx.Int("illuminance"); a > 0 { a1 = a }
-    }
-    if dx, ok := s.device_index["0xa4c138acbd2987a4"]; ok && dx != nil && dx.uid != "" {	// "Кухня, чайный стол"}
-        if a := dx.Int("illuminance"); a > 0 { a2 = a }
-    }
-    if dx, ok := s.device_index["0xa4c1387d9dbc566f"]; ok && dx != nil && dx.uid != "" {	// "Кухня, активность" }
-        if a := dx.Int("illuminance"); a > 0 { a3 = a }
-    }
-    log.Printf(" * turnOffKitchen() illuminance: tm:%dh a1=%d, a2=%d, a3=%d", tmh, a1, a2, a3)
-
-//    if a && b && c && d {
-//        s.publish(Z2M+"0x449fdafffe145831/set", 0, false, `{"ir_code_to_send":"BX0jthE2AuATAQG0BuAVA0ABQCPgFwFAI+APAwmPm30j/gg2Av//4CIHAgg2Ag=="}`)		// Кухня потолочный свет ON|OFF
-//    }
-
-    s.executeTVOFF()
+    go func() {		// Длительные задания
+//        s.executeMainLampOFF()		// Выключить главное освещение
+        s.executeTVOFF()		// Выключить телевизор, если доступен!
+    }()
 }
 
 //---------------------------------------------------------------------------
@@ -277,23 +260,9 @@ func (s *service) executeAllOFF() {	// Требуется предварител
         if dev.executor && dev.uid != "" && dev.String("state_l3") != "OFF" { s.publish(Z2M+dev.uid+"/set" , dev.qos, false, `{"state_l3":"OFF"}`) }
         if dev.executor && dev.uid != "" && dev.String("state_l4") != "OFF" { s.publish(Z2M+dev.uid+"/set" , dev.qos, false, `{"state_l4":"OFF"}`) }
     }
-    s.executeTVOFF()	// Выключить телевизор, если доступен!
+    go func() {		// Длительные задания
+//        s.executeMainLampOFF()		// Выключить главное освещение
+        s.executeTVOFF()		// Выключить телевизор, если доступен!
+    }()
 }
-//---------------------------------------------------------------------------
-
-func (s *service) executeTVOFF() {	// Требуется предварительная синхронизация s.mut.R
-    if dx, ok := s.device_index[nameActivityInTheKitchen]; ok && dx != nil && dx.String("TV") == "ON" {
-        for i:=0; i < 3; i++ {
-            if checkTV("192.168.0.88") {
-                s.publish(Z2M+"0x449fdafffe145831/set", 0, false, `{"ir_code_to_send":"BW8jsxFHAsABA50GRwLgCwFAF0ADQAFAB+AHA+ADAUAb4AcBQBPAA0ABwAvABwkKom8jBQlHAv//4DoHAglHAg=="}`)		// ON/OFF HaierTV
-                s.publish(Z2M+"0x449fdafffe145831/set", 0, false, `{"ir_code_to_send":"BW8jsxFHAsABA50GRwLgCwFAF0ADQAFAB+AHA+ADAUAb4AcBQBPAA0ABwAvABwkKom8jBQlHAv//4DoHAglHAg=="}`)		// ON/OFF HaierTV
-            } else {
-                log.Println(" * TV: OFF")
-                break
-            }
-            time.Sleep(time.Second * time.Duration(40))
-        }
-    }
-}
-
 //---------------------------------------------------------------------------
