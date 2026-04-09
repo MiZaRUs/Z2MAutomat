@@ -236,7 +236,7 @@ func (dev *ZBDev) SaveSensors(sens []string) {
     }
 //    log.Println("SaveSensors()", dev.uid, sens, len(data))
     if len(data) < 22 || len(data) > 250 { return }
-    if er := ipc.SendSHAMsg(monitor_addr, data); er != nil { log.Println("ERROR ipc.SendSHAMsg()", er) }
+    if er := ipc.SendSHAMetric(monitor_addr, data); er != nil { log.Println("ERROR ipc.SendSHAMsg()", er) }
 }
 
 //---------------------------------------------------------------------------
@@ -267,7 +267,7 @@ func (dev *ZBDev) SaveExecutorState() {
     data = append(data, bf[:]...)
     data = append(data, []byte(dev.uid+":state")...)			// дополним строкой - uid:сенсор
     data = append(data, 0)						// завершим 0
-    if er := ipc.SendSHAMsg(monitor_addr, data); er != nil { log.Println("ERROR ipc.SendSHAMsg()", er) }
+    if er := ipc.SendSHAMetric(monitor_addr, data); er != nil { log.Println("ERROR ipc.SendSHAMsg()", er) }
 }
 
 //---------------------------------------------------------------------------

@@ -132,7 +132,7 @@ func (s *service) procTaskControl() {       //  Управление задач�
                     s.mut.RLock()
                     for i, d := range s.device_index {          // Проверить обновление данных
                         if tmx := int(tmnow.Sub(d.tmup).Seconds()); tmx >= (3600 * 24 * 2) {    // час*n*s
-                            s.notification.Send(d.tmup, "Внимание!", fmt.Sprintf("Устройство %s не активно! %s", d.Name, d.uid))
+                            s.notification.Send(d.tmup, "Внимание", fmt.Sprintf("Устройство %s давно нет данных! %s", d.Name, d.uid))
                             log.Println("WARNING АВАРИЯ", i, d.Name, "TMUP:", tmx, "Нет данных !!!" )           // АВАРИЯ !!!!
                             d.tmup = time.Now()                 // сброс аварии
                         }

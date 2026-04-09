@@ -15,10 +15,20 @@ import (
 )
 
 //---------------------------------------------------------------------------
-//UID     -  Bucket
-//Sensor  -  Bucket
-//TMU     -  key
-//Value   -  val
+//Bucket	- UID, Sensor, Tag
+//key		- tmu
+//val		- Value, msg
+//---------------------------------------------------------------------------
+
+func (sm *SM) saveEvent(t byte, data []byte)(err error) {
+
+    tms := time.UnixMilli(int64(binary.BigEndian.Uint64(data))).Format("2006-01-02 15:04:05.000")
+
+    log.Println(" +++++ IPC.saveEvent:", t, tms, string(data[8:]))	// две строки разделённые : и завершенные 0
+
+    return err
+}
+
 //---------------------------------------------------------------------------
 
 func (sm *SM) saveMetrics(data []byte) {

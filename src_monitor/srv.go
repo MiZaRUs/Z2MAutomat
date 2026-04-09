@@ -24,7 +24,7 @@ import (
 
 // ----------------------------------------
 const (
-    VERSION = "0.4"
+    VERSION = "0.5"
 )
 // ----------------------------------------
 
@@ -61,9 +61,14 @@ func (sm *SM) executeConnect(conn *net.UDPConn, addr *net.UDPAddr, buf []byte) {
     if (dl > 2) && (dl < 0x0FF) && dl == len(buf) { // заголовок + сообщение и КС
         ksx := uint16(buf[len(buf)-1]) << 8
         ksx += uint16(buf[len(buf)-2])
-        if ksx == ipc.CheckSumCRC16_CCITT(buf[:len(buf)-2]) { // проверка CRC !!!
-            if buf[0] == 1 && len(buf) > 33 {			// тип пакета - метрики
+        if ksx == ipc.CheckSumCRC16_CCITT(buf[:len(buf)-2]) { // проверка CRC !!
+            if len(buf) > 33 && buf[0] == 1 {			// тип пакета - метрики
                 sm.saveMetrics(buf[1:len(buf)-2])
+            }
+            if len(buf) > 12 && ( buf[0] == 111 || buf[0] == 222) {	// тип пакета - события, требующие подтверждения
+                if err := sm.saveEvent(buf[0], buf[1:len(buf)-2]); err == nil {
+                    conn.WriteTo([]byte{'s', 'h', 0, 0}, addr)
+                }
             }
         } else {
             log.Printf("ERROR executeConnect CRC - failed: %X", ksx)

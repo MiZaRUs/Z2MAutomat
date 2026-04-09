@@ -7,6 +7,7 @@ package ipc
 import (
 //    "log"
     "fmt"
+    "time"
     "net"
     "encoding/binary"
 )
@@ -40,9 +41,18 @@ func CheckSumCRC16_CCITT(data []byte) uint16 {
     }
     return crc16
 }
+
 //---------------------------------------------------------------------------
 
-func SendSHAMsg(port string, msg []byte)(err error) {
+func Uint2Array(dx uint64)(buf []byte) {
+    buf = make([]byte, 8)
+    binary.BigEndian.PutUint64(buf[:], dx)
+    return buf[:]
+}
+
+//---------------------------------------------------------------------------
+
+func SendSHAMetric(port string, msg []byte)(err error) {	// быстрая отправка метрик, без подтверждения
     if len(port) < 5 || len(msg) < 33 { return nil }
     var conn *net.UDPConn	//net.Conn
     var serverAddr, localAddr *net.UDPAddr
@@ -53,11 +63,11 @@ func SendSHAMsg(port string, msg []byte)(err error) {
                 crc := CheckSumCRC16_CCITT(msg)
                 msg = append(msg, byte(crc&0xFF))
                 msg = append(msg, byte((crc >> 8)&0xFF))
-                rmb := []byte{'s', 'h', 0, 0}
+                rmb := []byte{'s','h', 0,0}
                 binary.LittleEndian.PutUint16(rmb[2:], uint16(len(msg)&0xFFFF))
                 rmb = append(rmb, []byte(msg)...)
-                if n, er := conn.Write(rmb); er != nil || n != len(rmb) {	// Инициатор
-                    return fmt.Errorf("%d<>%d",n, len(rmb), er)
+                if n, er := conn.Write(rmb); er != nil || n != len(rmb) {
+                    return fmt.Errorf("send fail %d<>%d",n, len(rmb), er)
                 }
 //                    log.Printf(" * SendSHAMetric:%d <%s> + CRC:%X, RMB:%d HEX[% X]", len(msg), msg[:len(msg)-2], crc, n, rmb)
             }
@@ -68,10 +78,33 @@ func SendSHAMsg(port string, msg []byte)(err error) {
 
 //---------------------------------------------------------------------------
 
-func Uint2Array(dx uint64)(buf []byte) {
-    buf = make([]byte, 8)
-    binary.BigEndian.PutUint64(buf[:], dx)
-    return buf[:]
+func SendSHAEvent(port string, msg []byte)(err error) {		// отправка важных событий, с ожиданием подтверждения.
+    if len(port) < 5 || len(msg) < 16 { return fmt.Errorf("недостаточно данных для отправки!") }
+    var conn *net.UDPConn	//net.Conn
+    var serverAddr, localAddr *net.UDPAddr
+    if serverAddr, err = net.ResolveUDPAddr("udp", port); err == nil {
+        if localAddr, err = net.ResolveUDPAddr("udp", "localhost:0"); err == nil {
+            if conn, err = net.DialUDP("udp", localAddr, serverAddr); err == nil &&  conn != nil{
+                defer conn.Close()
+                crc := CheckSumCRC16_CCITT(msg)
+                msg = append(msg, byte(crc&0xFF))
+                msg = append(msg, byte((crc >> 8)&0xFF))
+                rmb := []byte{'s','h', 0,0}
+                binary.LittleEndian.PutUint16(rmb[2:], uint16(len(msg)&0xFFFF))
+                rmb = append(rmb, []byte(msg)...)
+                if n, er := conn.Write(rmb); er != nil || n != len(rmb) {	// Инициатор
+                    return fmt.Errorf("send fail %d<>%d",n, len(rmb), er)
+                }
+                cnt := 0
+                bf := make([]byte, 4)
+                conn.SetReadDeadline(time.Now().Add(time.Second * 5))	// ждём 5 сек.
+                if cnt,_,err = conn.ReadFromUDP(bf); err == nil {	// ждём пустое сообщение
+                    if cnt != 4 || string(bf[:2]) != `sh` || bf[2] != 0 || bf[3] != 0 { err = fmt.Errorf("request fail") }
+                }
+            }
+        }
+    }
+    return err
 }
 
 //---------------------------------------------------------------------------
