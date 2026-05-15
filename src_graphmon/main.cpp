@@ -63,7 +63,7 @@ AppConf getConfig(QString fn){	// Читаем конфиг
                 QString  graph = obj["graph"].toString();
                 if(graph != "") {
                     std::vector<GrData> data;
-                    for(const QJsonValue &val : obj["data"].toArray()){
+                    for(const QJsonValue &val : obj["trends"].toArray()){
                         if (val.isObject()){
                             QJsonObject obj = val.toObject();
                             QString  uid = obj["uid"].toString();
