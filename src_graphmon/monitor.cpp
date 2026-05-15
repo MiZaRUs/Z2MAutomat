@@ -1,5 +1,5 @@
 /****************************************************************************
- *            Created    2026    by    oleg@shirokov.online                 *
+ *      Created  in  2011-2026  by  Oleg Shirokov   olgshir@gmail.com       *
  ****************************************************************************/
 
 #include "monitor.h"
@@ -242,9 +242,9 @@ void Monitor::slotActivHelp(){
             "<BR>"
             "<BR>"
         "</P>"
-        "<H3><CENTER> Версия 0.5 </CENTER></H3>"
-        "<H4><CENTER> Февраль 2026 </CENTER></H4>"
-        "<H4><CENTER> oleg@shirokov.online </CENTER></H4>"
+        "<H3><CENTER> Версия 0.51 </CENTER></H3>"
+        "<H4><CENTER> Май 2026 </CENTER></H4>"
+        "<H4><CENTER> olgshir@gmail.com </CENTER></H4>"
         "<BR>"
         "</BODY>"
         "</HTML>"

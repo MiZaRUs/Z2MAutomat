@@ -1,5 +1,5 @@
 /****************************************************************************
- *     Created  in  2025-2026  by  Oleg Shirokov   oleg@shirokov.online     *
+ *      Created  in  2025-2026  by  Oleg Shirokov   olgshir@gmail.com       *
  ****************************************************************************/
 
 package ipc
