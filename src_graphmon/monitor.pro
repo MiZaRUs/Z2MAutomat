@@ -1,7 +1,7 @@
 TEMPLATE	 = app
 TARGET		 = graphmon
 
-CONFIG += c++17
+CONFIG += c++20
 
 QT += widgets network
 

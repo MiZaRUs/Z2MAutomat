@@ -1,5 +1,5 @@
 /****************************************************************************
- *      Created  in  2025-2026  by  Oleg Shirokov   olgshir@gmail.com       *
+ *     Created  in  2025-2026  by  Oleg Shirokov   oleg@shirokov.online     *
  ****************************************************************************/
 
 package main
@@ -21,11 +21,20 @@ import (
 //---------------------------------------------------------------------------
 
 func (sm *SM) saveEvent(t byte, data []byte)(err error) {
-
+// if t == 111 {норм.синхронизация}  elseif t == 222 { НОВОЕ оповещение }
     tms := time.UnixMilli(int64(binary.BigEndian.Uint64(data))).Format("2006-01-02 15:04:05.000")
-
     log.Println(" +++++ IPC.saveEvent:", t, tms, string(data[8:]))	// две строки разделённые : и завершенные 0
 
+    err = sm.mdb.Update(func(tx *bbolt.Tx) error {
+        if event, err := tx.CreateBucketIfNotExists([]byte("*EVENTS*")); err == nil && event != nil {
+            if message, err := event.CreateBucketIfNotExists([]byte("*Messages*")); err == nil && message != nil {
+	    // if t == 111 МОЖНО проверить наличие и исключить повторную запись !!!
+	    // if t == 222 ОБЯЗАТЕЛЬНО сохранить !!!
+                return message.Put(data[0:8], data[8:])
+            } else if err != nil { return err }
+        } else if err != nil { return err }
+        return nil
+    })
     return err
 }
 
@@ -47,9 +56,9 @@ func (sm *SM) saveMetrics(data []byte) {
                         if t, v := sensor.Cursor().Last(); t != nil {				// последнее значение
                             if (time.Now().UnixMilli() - int64(binary.BigEndian.Uint64(t))) < 10000 && bytes.Compare(v, data[8:16]) == 0 { return nil }      // игнорировать свежие повторы (10 секунд) !
                         }
-                        if "state" == lid[1] {
-                            log.Printf(" * Metric: %s : %s -- %X : %X", lid[0], lid[1], data[0:8], data[8:16])
-                        }
+//                        if "state" == lid[1] {
+//                            log.Printf(" * Metric: %s : %s -- %X : %X", lid[0], lid[1], data[0:8], data[8:16])
+//                        }
                         return sensor.Put(data[0:8], data[8:16])
                     } else if err != nil { return err }
                 } else if err != nil { return err }
@@ -84,7 +93,7 @@ func (sm *SM) checkMDBStatus() {        // Мониторинг состояни
                         ddel := time.Duration(24*3)			// постоянное хранение 3 суток
                         if string(ns) == "illuminance" { ddel = 25 }	// временное хранение  {illuminance}
                         maxd := ipc.Uint2Array(uint64(tmSafeKeeping.Add(-1*ddel * time.Hour).UnixMilli()))
-                        log.Println("MDB.Bucket.D&S:", time.UnixMilli(int64(binary.BigEndian.Uint64(maxd))).Format("2006-01-02 15:04:05.000"), string(nd), string(ns))
+//                        log.Println("MDB.Bucket.D&S:", time.UnixMilli(int64(binary.BigEndian.Uint64(maxd))).Format("2006-01-02 15:04:05.000"), string(nd), string(ns))
 
                         sensor := device.Bucket(ns)			// Получим корзину (сенсор)
                         c := sensor.Cursor()

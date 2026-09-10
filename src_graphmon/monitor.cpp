@@ -59,10 +59,10 @@ Monitor::Monitor(AppConf* cfg, QWidget* pwgt/*= 0*/) : QWidget(pwgt){
 
 //---------------------------------------------------------------------------
 
-double Monitor::getData(int n, QString uid, QString sensor, qint64 tmin, qint64 tmax, bool aprx ){
+double Monitor::getData(int n, QString duid, QString sens, qint64 tmin, qint64 tmax, bool aprx ){
     QJsonObject jsonObject;
-    jsonObject["uid"] = uid;
-    jsonObject["sensor"] = sensor;
+    jsonObject["duid"] = duid;
+    jsonObject["sens"] = sens;
     jsonObject["tmin"] = tmin;
     jsonObject["tmax"] = tmax;
     QByteArray postData = QJsonDocument(jsonObject).toJson(QJsonDocument::Compact);
@@ -86,24 +86,35 @@ double Monitor::getData(int n, QString uid, QString sensor, qint64 tmin, qint64 
     }
     http->close();
 
+//    if(tmax == 0) tmax = QDateTime::currentDateTime().toMSecsSinceEpoch();	// был запрос последних значений
     double tmf = -1;
     double val = -1;
-    if(tmax == 0) tmax = QDateTime::currentDateTime().toMSecsSinceEpoch();	// был запрос последних значений
     if (doc.isObject()){
         QJsonObject json = doc.object();
-        QJsonArray jsonArray = json["data"].toArray();
-        for(const QJsonValue &value : jsonArray){
-            if (value.isObject()){
-                QJsonObject obj = value.toObject();
-                val = obj["val"].toDouble() * yfactor;
-                tmf = (tmax - static_cast<quint64>(obj["tmu"].toDouble())) * xfactor;
-//        qDebug() << "V:" << tmf << val;
-                if(!aprx && pgrd->trends[n].Points.size() > 0) {
-                    double vx = pgrd->trends[n].Points.back().ry();
-                    pgrd->trends[n].Points.push_back(QPointF(tmf, vx));	// сдинем прошлое значение
+        QJsonArray jsonData = json["data"].toArray();
+        for(const QJsonValue &data : jsonData){
+            if (data.isObject()){
+                QJsonObject obj = data.toObject();
+                QString duid = obj["duid"].toString();
+                QString sens = obj["sens"].toString();
+//                qDebug() << "V:" << duid << sens;
+                QJsonArray jsonArray = obj["arr"].toArray();
+                for(const QJsonValue &arr : jsonArray){
+                    if (arr.isObject()){
+                        QJsonObject ob = arr.toObject();
+                        tmf = (tmax - static_cast<quint64>(ob["tmu"].toDouble())) * xfactor;
+                        qint64 ival = static_cast<quint64>(ob["val"].toDouble());
+                        if ( sens != "state" ) {
+                            val = std::bit_cast<double>(ival) * yfactor;
+                        }
+//                        qDebug() << "V:" << tmf << val;
+                        if(!aprx && pgrd->trends[n].Points.size() > 0) {
+                            double vx = pgrd->trends[n].Points.back().ry();
+                            pgrd->trends[n].Points.push_back(QPointF(tmf, vx));	// сдинем прошлое значение
+                        }
+                        pgrd->trends[n].Points.push_back(QPointF(tmf, val));
+                    }
                 }
-
-                pgrd->trends[n].Points.push_back(QPointF(tmf, val));
             }
         }
     }

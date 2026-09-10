@@ -1,5 +1,5 @@
 /****************************************************************************
- *      Created  in  2025-2026  by  Oleg Shirokov   olgshir@gmail.com       *
+ *     Created  in  2025-2026  by  Oleg Shirokov   oleg@shirokov.online     *
  ****************************************************************************/
 
 package main
@@ -24,7 +24,7 @@ import (
 
 // ----------------------------------------
 const (
-    VERSION = "0.5"
+    VERSION = "0.7"
 )
 // ----------------------------------------
 
@@ -56,17 +56,18 @@ func (sm *SM) Closer() { // освободить любые выделенные
 //---------------------------------------------------------------------------
 
 func (sm *SM) executeConnect(conn *net.UDPConn, addr *net.UDPAddr, buf []byte) { // для любых SVD сообщений
+//    log.Printf(" *** executeConnect:BUF(%d)%X", len(buf), buf)
     dl := int(binary.LittleEndian.Uint16(buf))      // читаем размер данных  + CRC
     buf = buf[2:]                                   // уберём длину
-    if (dl > 2) && (dl < 0x0FF) && dl == len(buf) { // заголовок + сообщение и КС
+    if (dl > 2) && (dl < 0x0FF) && dl == len(buf) { // заголовок + сообщение и КС	ДЛИНА !!!
         ksx := uint16(buf[len(buf)-1]) << 8
         ksx += uint16(buf[len(buf)-2])
         if ksx == ipc.CheckSumCRC16_CCITT(buf[:len(buf)-2]) { // проверка CRC !!
             if len(buf) > 33 && buf[0] == 1 {			// тип пакета - метрики
                 sm.saveMetrics(buf[1:len(buf)-2])
             }
-            if len(buf) > 12 && ( buf[0] == 111 || buf[0] == 222) {	// тип пакета - события, требующие подтверждения
-                if err := sm.saveEvent(buf[0], buf[1:len(buf)-2]); err == nil {
+            if len(buf) > 12 && ( buf[0] == 111 || buf[0] == 222) {	// тип пакета - события, требующие подтверждения, заканчивается "0"
+                if err := sm.saveEvent(buf[0], buf[1:len(buf)-3]); err == nil {
                     conn.WriteTo([]byte{'s', 'h', 0, 0}, addr)
                 }
             }
@@ -97,18 +98,42 @@ func (sm *SM)  restMetrics(w http.ResponseWriter, r *http.Request) {
     w.Header().Set("Content-type", "application/json")
     if r.RequestURI == `/rest/metrics`{
         body, _ := ioutil.ReadAll(r.Body)
-//        log.Println("restMetrics ReadAll:", string(body))
-        if len(body) > 40 && len(body) < 256 {
+        log.Println("restMetrics ReadAll:", len(body), string(body))
+        if len(body) > 38 && len(body) < 256 {
 //            log.Println("REST:", string(body)) // {"uid":"0xa4c138bf239fc880","sensor":"illuminance", "tmin":1770799588725815806, "tmax":1770803188725815806}
             type REQ struct {
-                UID     string `json:"uid"`
-                Sensor  string `json:"sensor"`
+                Duid   string `json:"duid"`
+                Sens   string `json:"sens"`
+                TMin   uint64 `json:"tmin"`
+                TMax   uint64 `json:"tmax"`
+            }
+            req := REQ{}
+            if err := json.Unmarshal(body, &req); err == nil {
+                w.Write([]byte(sm.getMetricsJSON(req.Duid, req.Sens, req.TMin, req.TMax)))
+                return
+	    }
+        }
+    }
+    w.Write([]byte(`{}`))
+}
+
+//---------------------------------------------------------------------------
+
+//  Обработка запросов REST Notifications
+func (sm *SM)  restNotifications(w http.ResponseWriter, r *http.Request) {
+//    log.Println("restEventMessages RequestURI:", string(r.RequestURI))
+    w.Header().Set("Content-type", "application/json")
+    if r.RequestURI == `/rest/notifications`{
+        body, _ := ioutil.ReadAll(r.Body)
+//        log.Println("restMetrics ReadAll:", len(body), string(body))
+        if len(body) > 18 && len(body) < 60 {	// {"tmin":1770799588725815806, "tmax":1770803188725815806}
+            type REQ struct {
                 TMin    uint64 `json:"tmin"`
                 TMax    uint64 `json:"tmax"`
             }
             req := REQ{}
-            if err := json.Unmarshal(body, &req); err == nil && req.UID != "" && req.Sensor != "" {
-                w.Write([]byte(sm.getMetricsJSON(req.UID, req.Sensor, req.TMin, req.TMax)))
+            if err := json.Unmarshal(body, &req); err == nil {
+                w.Write([]byte(sm.getNotificationsJSON(req.TMin, req.TMax)))
                 return
 	    }
         }
@@ -138,6 +163,7 @@ func (sm *SM) httpService() {		// http service
     http.Handle("/ws", websocket.Handler(sm.wsHandler))
     http.HandleFunc("/", sm.rootHandler)
     http.HandleFunc("/rest/metrics", sm.restMetrics)
+    http.HandleFunc("/rest/notifications", sm.restNotifications)
 
     err := http.ListenAndServe(sm.HttpServ, nil)
     if err != nil {
