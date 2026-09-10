@@ -265,7 +265,7 @@ func (dev *ZBDev) SaveExecutorState() {
     binary.BigEndian.PutUint64(bf[:], uint64(dev.tmup.UnixMilli()))	// 8 байт - время
     binary.BigEndian.PutUint64(bf[8:], res)				// 8 байт - значение
     data = append(data, bf[:]...)
-    data = append(data, []byte(dev.uid+":state")...)			// дополним строкой - uid:сенсор
+    data = append(data, []byte(dev.uid+":state")...)			// дополним строкой - uid:state
     data = append(data, 0)						// завершим 0
     if er := ipc.SendSHAMetric(monitor_addr, data); er != nil { log.Println("ERROR ipc.SendSHAMsg()", er) }
 }

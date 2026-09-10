@@ -12,6 +12,9 @@ import (
     "encoding/binary"
     "go.etcd.io/bbolt"
     "ipc"
+    "bytes"
+//    "net/http"
+//    "io/ioutil"
     "os"
     "runtime/debug"
     "context"
@@ -42,6 +45,8 @@ type NOTIFICATION struct {
     messag_event  chan MESSAGE		// Событие-извещение для отправителя сообщений
 }
 
+const SZ_EVENT_CHAN = 7	// по количеству возможных одновременных сообщений
+
 //----------------------------------------
 //tag   -  Bucket
 //tmu   -  key
@@ -49,21 +54,7 @@ type NOTIFICATION struct {
 //---------------------------------------------------------------------------
 
 func (nn *NOTIFICATION) Send(tm time.Time, tag, msg string){	// Оповещения		Информация, Внимыние!, АВАРИЯ!
-    go func() {
-        if nn.storage != nil {					// сохранить для синхронизации с монитором, обеспечит надёжность отправки.
-            if err := nn.storage.Update(func(tx *bbolt.Tx) error {
-                if bucket, err := tx.CreateBucketIfNotExists([]byte(tag)); err == nil && bucket != nil {
-                    return bucket.Put(ipc.Uint2Array(uint64(tm.UnixMilli())), []byte(msg))
-                } else if err != nil { return err }
-                    return nil
-            }); err != nil {
-                log.Println("ERROR pushNotification:", err)
-                return
-            }
-        }
-    }()
-
-    if nn.messag_event != nil { nn.messag_event <- MESSAGE{tm:tm, tag:tag, msg:msg} }	// упорядочить отправку опвещений
+    if nn.messag_event != nil { nn.messag_event <- MESSAGE{tm:tm, tag:tag, msg:msg} }	// упорядочить отправку опвещений - буфферизированный канал
 }
 
 //---------------------------------------------------------------------------
@@ -87,32 +78,49 @@ func (nn *NOTIFICATION) Create( pat string){
     } else { nn.storage = db }
     log.Println("Инициализировано хранилище сообщений. Path:", nn.storage.Path(), " Stats:", nn.storage.Stats())
 
-
-    nn.messag_event = make(chan MESSAGE, 7)                // канал событий-извещений для отправителя оповещений
+    nn.messag_event = make(chan MESSAGE, SZ_EVENT_CHAN)     // буфферизированный канал событий-извещений для отправителя оповещений
     go func (){
         defer nn.recoveryNotification()
         for{                                // Ожидание событий и запуск процесса оповещения
             time.Sleep(time.Millisecond * time.Duration(10))
             if ev, ok := <- nn.messag_event; ok && ev.tm.Unix() > 10000 && ev.msg != "" {
-//                log.Println(" +++++ sendNotification():", ev.tm.Format("2006-01-02 15:04:05.000"), ev.tag, ev.msg )
-                go func() {
-                    if err := nn.sendMessage(ev); err != nil {		// Три попытки
-                        time.Sleep(time.Second * time.Duration(20))
-                        if err = nn.sendMessage(ev); err != nil {
-                            time.Sleep(time.Second * time.Duration(40))
+                dubl := false
+                if nn.storage != nil {					// сохранить для синхронизации с монитором, обеспечит надёжность отправки.
+                    if err := nn.storage.Update(func(tx *bbolt.Tx) error {
+                        if bucket, err := tx.CreateBucketIfNotExists([]byte(ev.tag)); err == nil && bucket != nil {
+                            if tmptmu, tmpmsg := bucket.Cursor().Last(); tmptmu != nil && tmpmsg != nil && (ev.tm.UnixMilli() - int64(binary.BigEndian.Uint64(tmptmu))) < 10000 && bytes.Compare(tmpmsg, []byte(ev.msg)) == 0 {   // 10 sec последнее свежие сообщение сравнить на дублирование
+                                dubl = true
+                            } else {
+                                return bucket.Put(ipc.Uint2Array(uint64(ev.tm.UnixMilli())), []byte(ev.msg))
+                            }
+                        } else if err != nil { return err }
+                            return nil
+                    }); err != nil {
+                        log.Println("ERROR saveNotification:", err)
+                        return
+                    }
+                }
+
+                if !dubl {	// если это не дубль, то постораемся отправить за три попытки
+                    go func() {
+                        if err := nn.sendMessage(ev); err != nil {
+                            time.Sleep(time.Second * time.Duration(20))
                             if err = nn.sendMessage(ev); err != nil {
-                                log.Println("ERROR FCM SendMessage:", err)
-                                if err = nn.send2Monitor(222,ev); err != nil {// отправить извещение-222 в Сервис Мониторинга
-                                    log.Println("ERROR FATAL SendMessage:", err)
+                                time.Sleep(time.Second * time.Duration(40))
+                                if err = nn.sendMessage(ev); err != nil {
+                                    log.Println("ERROR FCM SendMessage:", err)	// МОЖНО продублировать в email !!!
                                 }
                             }
                         }
-                    }
-                }()
+                        if err := nn.send2Monitor(222,ev); err != nil {// отправить извещение-222 в Сервис Мониторинга
+                            log.Println("ERROR Send2Monitor:", err)
+                        }
+                    }()
+                }
+
             } else if !ok { break }
         } // for безусловный
     }()
-
 
     _minutes_ticker := time.NewTicker(time.Minute * 15)      // 15 минутный ТАЙМЕР чистки и синхронизации
     go func() {
@@ -133,13 +141,13 @@ func (nn *NOTIFICATION) Create( pat string){
                                     log.Printf("-- SYNC: TM:%s  Tag:%s  Msg:%s", time.UnixMilli(int64(binary.BigEndian.Uint64(tmu))).Format("2006-01-02 15:04:05.000"), string(bkey), string(msg) )
                                     bucket.Delete(tmu)		// удалить отправленное оповещения !!!
                                 } else {
-                                    log.Println("ERROR SYNC send2Monitor.tmu:", time.UnixMilli(int64(binary.BigEndian.Uint64(tmu))).Format("2006-01-02 15:04:05.000"), err)
+                                    log.Println("ERROR SYNC send2Monitor.tmu:", time.UnixMilli(int64(binary.BigEndian.Uint64(tmu))).Format("2006-01-02 15:04:05.000"), len(msg), string(msg), err)
                                 }
                             }
                             return nil
                         })
 
-                        maxd := uint64(tmnow.Add(-1440 * time.Minute).UnixMilli())	// хранение 3 суток Duration(60*24*3)
+                        maxd := uint64(tmnow.Add(-1440 * time.Minute).UnixMilli())	// хранение 3 суток Duration(60*24=1440)   *3
                         c := bucket.Cursor()
                         for tmu, msg := c.Seek(ipc.Uint2Array(maxd)); tmu != nil; tmu, _ = c.Prev() {
                             if binary.BigEndian.Uint64(tmu) < maxd {
@@ -170,6 +178,12 @@ func (nn *NOTIFICATION) recoveryNotification() { // При сбоях в раб�
 
 func (nn *NOTIFICATION) send2Monitor(tp byte, v MESSAGE) error {	// Отправка с подтверждением, для надёжности доставки оповещений.
     if monitor_addr == "" { return fmt.Errorf("не указан адрес получателя!") }
+    if len(v.msg) > 200 {
+        v.msg = v.msg[:200]		// Урезаем длинные сообщения !!!
+        v.msg += `~`
+    }
+    log.Println("Notification.send2Monitor:", len(v.msg), v.msg)
+
     var bf [8]byte
     binary.BigEndian.PutUint64(bf[:], uint64(v.tm.UnixMilli()))		// время
     var data = []byte{tp}						// 1 байт - тип пакета
@@ -187,6 +201,11 @@ func (nn *NOTIFICATION) sendMessage(v MESSAGE) error {	// for mobile FCM-app
     priority := "normal"
     if len(v.tag) > 0 && v.tag[len(v.tag)-1] == '!' { priority = "high" }
     log.Println(" >>>>>>>>>>>>>>>> send2FCM():", priority, v.tm.Format("2006-01-02 15:04:05.000"), v.tag, v.msg )
+
+    if len(v.msg) > 200 {
+        v.msg = v.msg[:200]		// Урезаем длинные сообщения !!!
+        v.msg += `~`
+    }
 
     message := &messaging.Message{
         Android: &messaging.AndroidConfig{Priority: priority}, // Установка высокого приоритета [4, 5]
